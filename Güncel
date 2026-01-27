@@ -7406,6 +7406,15 @@ def load_cari_bilgiler():
         # Pandas ile oku (daha kolay)
         df = pd.read_excel(MASTER_CARI_BILGILER_PATH)
         
+        # Sütun isimlerindeki boşlukları temizle
+        df.columns = df.columns.str.strip()
+        
+        # Sütun isimlerini standartlaştır (eski adlar için mapping)
+        column_mapping = {
+            'Tarih': 'Kayıt Tarihi'
+        }
+        df.rename(columns=column_mapping, inplace=True)
+        
         # NaN değerlerini boş string ile değiştir
         df = df.fillna('')
         
