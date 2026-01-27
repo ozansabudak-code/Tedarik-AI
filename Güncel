@@ -7362,7 +7362,8 @@ def initialize_cari_bilgiler_excel():
             ws.title = "Cari Bilgiler"
             
             # Başlıkları ekle
-            headers = ["Tedarikçi Adı", "Yetkili Kişi", "Telefon", "Adres", "Alım Türü", "Mail", "Eksik Evraklar", "Kayıt Tarihi"]
+            headers = ["Tedarikçi Adı", "Yetkili Kişi", "Telefon", "Adres", "Alım Türü", "Mail", "Eksik Evraklar", 
+                      "Sözleşme Bitiş Tarihi", "Sertifika Bitiş Tarihi", "Kayıt Tarihi"]
             ws.append(headers)
             
             # Başlıkları formatla
@@ -7383,7 +7384,9 @@ def initialize_cari_bilgiler_excel():
             ws.column_dimensions['E'].width = 20  # Alım Türü
             ws.column_dimensions['F'].width = 30  # Mail
             ws.column_dimensions['G'].width = 40  # Eksik Evraklar
-            ws.column_dimensions['H'].width = 20  # Kayıt Tarihi
+            ws.column_dimensions['H'].width = 20  # Sözleşme Bitiş Tarihi
+            ws.column_dimensions['I'].width = 20  # Sertifika Bitiş Tarihi
+            ws.column_dimensions['J'].width = 20  # Kayıt Tarihi
             
             wb.save(MASTER_CARI_BILGILER_PATH)
             print(f"Cari Bilgiler dosyası oluşturuldu: {MASTER_CARI_BILGILER_PATH}")
@@ -7468,6 +7471,8 @@ def save_cari_bilgi(data):
                     data.get('alim_turu', ''),
                     data.get('mail', ''),
                     data.get('eksik_evraklar', ''),
+                    data.get('sozlesme_bitis', ''),  # Sözleşme bitiş tarihi
+                    data.get('sertifika_bitis', ''),  # Sertifika bitiş tarihi
                     datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 ]
                 ws.append(new_row)
@@ -8151,6 +8156,48 @@ def init_compliance_center_tab():
         tk.Checkbutton(eksik_evrak_frame, text=evrak, variable=var, 
                       font=("Segoe UI", 8), bg="white").grid(row=i, column=0, sticky="w")
     
+    # Sözleşme Bitiş Tarihi
+    tk.Label(form_frame, text="Sözleşme Bitiş:", font=("Segoe UI", 9, "bold"),
+             bg="white").grid(row=7, column=0, sticky="w", padx=5, pady=3)
+    sozlesme_date_entry = tk.Entry(form_frame, font=("Segoe UI", 9), width=25)
+    sozlesme_date_entry.grid(row=7, column=1, padx=5, pady=3, sticky="ew")
+    sozlesme_date_entry.insert(0, "YYYY-MM-DD")
+    sozlesme_date_entry.config(fg="gray")
+    
+    def sozlesme_date_focus_in(event):
+        if sozlesme_date_entry.get() == "YYYY-MM-DD":
+            sozlesme_date_entry.delete(0, tk.END)
+            sozlesme_date_entry.config(fg="black")
+    
+    def sozlesme_date_focus_out(event):
+        if not sozlesme_date_entry.get():
+            sozlesme_date_entry.insert(0, "YYYY-MM-DD")
+            sozlesme_date_entry.config(fg="gray")
+    
+    sozlesme_date_entry.bind("<FocusIn>", sozlesme_date_focus_in)
+    sozlesme_date_entry.bind("<FocusOut>", sozlesme_date_focus_out)
+    
+    # Sertifika Bitiş Tarihi
+    tk.Label(form_frame, text="Sertifika Bitiş:", font=("Segoe UI", 9, "bold"),
+             bg="white").grid(row=8, column=0, sticky="w", padx=5, pady=3)
+    sertifika_date_entry = tk.Entry(form_frame, font=("Segoe UI", 9), width=25)
+    sertifika_date_entry.grid(row=8, column=1, padx=5, pady=3, sticky="ew")
+    sertifika_date_entry.insert(0, "YYYY-MM-DD")
+    sertifika_date_entry.config(fg="gray")
+    
+    def sertifika_date_focus_in(event):
+        if sertifika_date_entry.get() == "YYYY-MM-DD":
+            sertifika_date_entry.delete(0, tk.END)
+            sertifika_date_entry.config(fg="black")
+    
+    def sertifika_date_focus_out(event):
+        if not sertifika_date_entry.get():
+            sertifika_date_entry.insert(0, "YYYY-MM-DD")
+            sertifika_date_entry.config(fg="gray")
+    
+    sertifika_date_entry.bind("<FocusIn>", sertifika_date_focus_in)
+    sertifika_date_entry.bind("<FocusOut>", sertifika_date_focus_out)
+    
     form_frame.grid_columnconfigure(1, weight=1)
     
     # Form butonları
@@ -8167,6 +8214,12 @@ def init_compliance_center_tab():
         alim_turu_var.set("Kumaş")
         for var in evrak_checkboxes.values():
             var.set(False)
+        sozlesme_date_entry.delete(0, tk.END)
+        sozlesme_date_entry.insert(0, "YYYY-MM-DD")
+        sozlesme_date_entry.config(fg="gray")
+        sertifika_date_entry.delete(0, tk.END)
+        sertifika_date_entry.insert(0, "YYYY-MM-DD")
+        sertifika_date_entry.config(fg="gray")
     
     def save_cari_form():
         """Formu kaydet"""
@@ -8177,6 +8230,15 @@ def init_compliance_center_tab():
         mail = mail_entry.get().strip()
         adres = adres_text.get("1.0", tk.END).strip()
         alim_turu = alim_turu_var.get()
+        
+        # Tarih bilgilerini al
+        sozlesme_bitis = sozlesme_date_entry.get().strip()
+        if sozlesme_bitis == "YYYY-MM-DD" or not sozlesme_bitis:
+            sozlesme_bitis = ""
+        
+        sertifika_bitis = sertifika_date_entry.get().strip()
+        if sertifika_bitis == "YYYY-MM-DD" or not sertifika_bitis:
+            sertifika_bitis = ""
         
         # Eksik evrakları topla
         eksik_evraklar = [evrak for evrak, var in evrak_checkboxes.items() if var.get()]
@@ -8199,7 +8261,9 @@ def init_compliance_center_tab():
             'adres': adres,
             'alim_turu': alim_turu,
             'mail': mail,
-            'eksik_evraklar': eksik_evrak_str
+            'eksik_evraklar': eksik_evrak_str,
+            'sozlesme_bitis': sozlesme_bitis,
+            'sertifika_bitis': sertifika_bitis
         }
         
         success, message = save_cari_bilgi(data)
@@ -8362,6 +8426,310 @@ def init_compliance_center_tab():
     
     # İlk yükleme
     refresh_cari_list()
+    
+    # Orta kısım: Sözleşme ve Sertifika Alarm Paneli
+    alarm_panel_section = tk.LabelFrame(cari_panel, text="⏰ Sözleşme ve Sertifika Alarm Sistemi", 
+                                       font=("Segoe UI", 11, "bold"), bg="white", fg="#8e44ad",
+                                       padx=10, pady=10, relief="solid", bd=1)
+    alarm_panel_section.pack(fill="both", expand=False, pady=(5, 0))
+    
+    alarm_frame = tk.Frame(alarm_panel_section, bg="white")
+    alarm_frame.pack(fill="both", expand=True)
+    
+    def check_expiration_status():
+        """Sözleşme ve sertifikaların süre durumunu kontrol et"""
+        from datetime import datetime, timedelta
+        
+        records = load_cari_bilgiler()
+        today = datetime.now().date()
+        
+        results = {
+            'sozlesme_expired': [],
+            'sozlesme_expiring': [],
+            'sozlesme_valid': [],
+            'sertifika_expired': [],
+            'sertifika_expiring': [],
+            'sertifika_valid': []
+        }
+        
+        for record in records:
+            tedarikci = record.get('Tedarikçi Adı', '')
+            mail = record.get('Mail', '')
+            
+            # Sözleşme kontrolü
+            sozlesme_str = str(record.get('Sözleşme Bitiş Tarihi', '')).strip()
+            if sozlesme_str and sozlesme_str != '' and sozlesme_str != 'nan':
+                try:
+                    sozlesme_date = datetime.strptime(sozlesme_str[:10], '%Y-%m-%d').date()
+                    days_diff = (sozlesme_date - today).days
+                    
+                    if days_diff < 0:
+                        results['sozlesme_expired'].append({
+                            'tedarikci': tedarikci,
+                            'mail': mail,
+                            'date': sozlesme_str,
+                            'days': abs(days_diff)
+                        })
+                    elif days_diff <= 30:
+                        results['sozlesme_expiring'].append({
+                            'tedarikci': tedarikci,
+                            'mail': mail,
+                            'date': sozlesme_str,
+                            'days': days_diff
+                        })
+                    else:
+                        results['sozlesme_valid'].append({
+                            'tedarikci': tedarikci,
+                            'date': sozlesme_str,
+                            'days': days_diff
+                        })
+                except:
+                    pass
+            
+            # Sertifika kontrolü
+            sertifika_str = str(record.get('Sertifika Bitiş Tarihi', '')).strip()
+            if sertifika_str and sertifika_str != '' and sertifika_str != 'nan':
+                try:
+                    sertifika_date = datetime.strptime(sertifika_str[:10], '%Y-%m-%d').date()
+                    days_diff = (sertifika_date - today).days
+                    
+                    if days_diff < 0:
+                        results['sertifika_expired'].append({
+                            'tedarikci': tedarikci,
+                            'mail': mail,
+                            'date': sertifika_str,
+                            'days': abs(days_diff)
+                        })
+                    elif days_diff <= 30:
+                        results['sertifika_expiring'].append({
+                            'tedarikci': tedarikci,
+                            'mail': mail,
+                            'date': sertifika_str,
+                            'days': days_diff
+                        })
+                    else:
+                        results['sertifika_valid'].append({
+                            'tedarikci': tedarikci,
+                            'date': sertifika_str,
+                            'days': days_diff
+                        })
+                except:
+                    pass
+        
+        return results
+    
+    # Alarm gösterge frame'leri
+    indicators_frame = tk.Frame(alarm_frame, bg="white")
+    indicators_frame.pack(fill="x", pady=5)
+    
+    # Sözleşme göstergeleri
+    sozlesme_frame = tk.LabelFrame(indicators_frame, text="📄 Sözleşme Durumu", 
+                                   font=("Segoe UI", 10, "bold"), bg="white", fg="#2c3e50",
+                                   relief="solid", bd=1, padx=10, pady=5)
+    sozlesme_frame.pack(side="left", fill="both", expand=True, padx=5)
+    
+    sozlesme_expired_label = tk.Label(sozlesme_frame, text="🔴 Süresi Dolmuş: 0", 
+                                     font=("Segoe UI", 9), bg="white", fg="#e74c3c")
+    sozlesme_expired_label.pack(anchor="w", pady=2)
+    
+    sozlesme_expiring_label = tk.Label(sozlesme_frame, text="🟡 Yakında Dolacak: 0", 
+                                      font=("Segoe UI", 9), bg="white", fg="#f39c12")
+    sozlesme_expiring_label.pack(anchor="w", pady=2)
+    
+    sozlesme_valid_label = tk.Label(sozlesme_frame, text="🟢 Geçerli: 0", 
+                                    font=("Segoe UI", 9), bg="white", fg="#27ae60")
+    sozlesme_valid_label.pack(anchor="w", pady=2)
+    
+    # Sertifika göstergeleri
+    sertifika_frame = tk.LabelFrame(indicators_frame, text="🏅 Sertifika Durumu", 
+                                    font=("Segoe UI", 10, "bold"), bg="white", fg="#2c3e50",
+                                    relief="solid", bd=1, padx=10, pady=5)
+    sertifika_frame.pack(side="left", fill="both", expand=True, padx=5)
+    
+    sertifika_expired_label = tk.Label(sertifika_frame, text="🔴 Süresi Dolmuş: 0", 
+                                      font=("Segoe UI", 9), bg="white", fg="#e74c3c")
+    sertifika_expired_label.pack(anchor="w", pady=2)
+    
+    sertifika_expiring_label = tk.Label(sertifika_frame, text="🟡 Yakında Dolacak: 0", 
+                                       font=("Segoe UI", 9), bg="white", fg="#f39c12")
+    sertifika_expiring_label.pack(anchor="w", pady=2)
+    
+    sertifika_valid_label = tk.Label(sertifika_frame, text="🟢 Geçerli: 0", 
+                                     font=("Segoe UI", 9), bg="white", fg="#27ae60")
+    sertifika_valid_label.pack(anchor="w", pady=2)
+    
+    def update_alarm_display():
+        """Alarm göstergelerini güncelle"""
+        results = check_expiration_status()
+        
+        # Sözleşme sayılarını güncelle
+        sozlesme_expired_label.config(text=f"🔴 Süresi Dolmuş: {len(results['sozlesme_expired'])}")
+        sozlesme_expiring_label.config(text=f"🟡 Yakında Dolacak (30 gün): {len(results['sozlesme_expiring'])}")
+        sozlesme_valid_label.config(text=f"🟢 Geçerli: {len(results['sozlesme_valid'])}")
+        
+        # Sertifika sayılarını güncelle
+        sertifika_expired_label.config(text=f"🔴 Süresi Dolmuş: {len(results['sertifika_expired'])}")
+        sertifika_expiring_label.config(text=f"🟡 Yakında Dolacak (30 gün): {len(results['sertifika_expiring'])}")
+        sertifika_valid_label.config(text=f"🟢 Geçerli: {len(results['sertifika_valid'])}")
+    
+    def send_expiration_alerts():
+        """Süresi dolmuş ve dolmak üzere olanlara mail gönder"""
+        results = check_expiration_status()
+        
+        success_count = 0
+        fail_count = 0
+        
+        # Sözleşme uyarıları
+        for item in results['sozlesme_expired']:
+            mail = str(item['mail']).strip()
+            if not mail or mail == '' or mail == 'nan':
+                fail_count += 1
+                continue
+                
+            subject = "🔴 ACIL: Sözleşme Süresi Dolmuş!"
+            content = f"""Sayın {item['tedarikci']},
+
+Sözleşmenizin süresi {item['days']} gün önce dolmuştur.
+
+Bitiş Tarihi: {item['date']}
+
+Lütfen en kısa sürede sözleşme yenileme işlemlerini başlatınız.
+
+Saygılarımızla,
+Tedarikçi Uyumluluk Merkezi"""
+            
+            if send_single_alert_email(mail, subject, content):
+                success_count += 1
+            else:
+                fail_count += 1
+        
+        for item in results['sozlesme_expiring']:
+            mail = str(item['mail']).strip()
+            if not mail or mail == '' or mail == 'nan':
+                fail_count += 1
+                continue
+                
+            subject = "🟡 Uyarı: Sözleşmeniz Yakında Dolacak"
+            content = f"""Sayın {item['tedarikci']},
+
+Sözleşmenizin süresi {item['days']} gün içinde dolacaktır.
+
+Bitiş Tarihi: {item['date']}
+
+Lütfen sözleşme yenileme işlemlerini planlayınız.
+
+Saygılarımızla,
+Tedarikçi Uyumluluk Merkezi"""
+            
+            if send_single_alert_email(mail, subject, content):
+                success_count += 1
+            else:
+                fail_count += 1
+        
+        # Sertifika uyarıları
+        for item in results['sertifika_expired']:
+            mail = str(item['mail']).strip()
+            if not mail or mail == '' or mail == 'nan':
+                fail_count += 1
+                continue
+                
+            subject = "🔴 ACIL: Sertifika Süresi Dolmuş!"
+            content = f"""Sayın {item['tedarikci']},
+
+Sertifikanızın süresi {item['days']} gün önce dolmuştur.
+
+Bitiş Tarihi: {item['date']}
+
+Lütfen en kısa sürede sertifika yenileme işlemlerini başlatınız.
+
+Saygılarımızla,
+Tedarikçi Uyumluluk Merkezi"""
+            
+            if send_single_alert_email(mail, subject, content):
+                success_count += 1
+            else:
+                fail_count += 1
+        
+        for item in results['sertifika_expiring']:
+            mail = str(item['mail']).strip()
+            if not mail or mail == '' or mail == 'nan':
+                fail_count += 1
+                continue
+                
+            subject = "🟡 Uyarı: Sertifikanız Yakında Dolacak"
+            content = f"""Sayın {item['tedarikci']},
+
+Sertifikanızın süresi {item['days']} gün içinde dolacaktır.
+
+Bitiş Tarihi: {item['date']}
+
+Lütfen sertifika yenileme işlemlerini planlayınız.
+
+Saygılarımızla,
+Tedarikçi Uyumluluk Merkezi"""
+            
+            if send_single_alert_email(mail, subject, content):
+                success_count += 1
+            else:
+                fail_count += 1
+        
+        messagebox.showinfo("Mail Gönderimi Tamamlandı", 
+                          f"Başarılı: {success_count}\nBaşarısız: {fail_count}")
+    
+    def send_single_alert_email(to_email, subject, content):
+        """Tek bir alarm maili gönder"""
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = GMAIL_USER
+            msg['To'] = to_email
+            msg['Subject'] = subject
+            
+            html_content = f"""
+            <html>
+            <body style="font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #333;">
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px;">
+                    <div style="background-color: #8e44ad; color: white; padding: 15px; border-radius: 5px 5px 0 0;">
+                        <h2 style="margin: 0;">⏰ Tedarikçi Uyumluluk Alarm Sistemi</h2>
+                    </div>
+                    <div style="padding: 20px; background-color: #f9f9f9;">
+                        <pre style="font-family: 'Segoe UI', Arial, sans-serif; white-space: pre-wrap; word-wrap: break-word;">{content}</pre>
+                    </div>
+                    <div style="text-align: center; padding: 10px; background-color: #ecf0f1; border-radius: 0 0 5px 5px; font-size: 12px; color: #7f8c8d;">
+                        Bu email Tedarikçi Uyumluluk Sistemi tarafından otomatik oluşturulmuştur.
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+            
+            msg.attach(MIMEText(html_content, 'html'))
+            
+            server = smtplib.SMTP('smtp.gmail.com', 587)
+            server.starttls()
+            server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+            server.send_message(msg)
+            server.quit()
+            
+            activity_logger.log_email_sent(to_email, subject, "Alarm Sistemi")
+            return True
+        except Exception as e:
+            print(f"Mail gönderme hatası ({to_email}): {e}")
+            return False
+    
+    # Butonlar
+    btn_frame = tk.Frame(alarm_frame, bg="white")
+    btn_frame.pack(fill="x", pady=5)
+    
+    tk.Button(btn_frame, text="🔄 Durumu Güncelle", font=("Segoe UI", 9, "bold"),
+             bg="#3498db", fg="white", cursor="hand2", padx=15, pady=5,
+             command=update_alarm_display).pack(side="left", padx=5)
+    
+    tk.Button(btn_frame, text="📧 Alarm Maillerini Gönder", font=("Segoe UI", 9, "bold"),
+             bg="#e74c3c", fg="white", cursor="hand2", padx=15, pady=5,
+             command=send_expiration_alerts).pack(side="left", padx=5)
+    
+    # İlk yükleme
+    update_alarm_display()
     
     # Alt kısım: Mail Gönderim Paneli
     mail_panel_section = tk.LabelFrame(cari_panel, text="📧 Mail Gönderim Paneli", 
