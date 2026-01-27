@@ -7415,6 +7415,8 @@ def load_cari_bilgiler():
 
 def save_cari_bilgi(data):
     """Yeni cari bilgiyi Excel dosyasına kaydet"""
+    import time
+    
     try:
         if not OPENPYXL_AVAILABLE:
             return False, "Openpyxl kütüphanesi yüklü değil!"
@@ -7423,31 +7425,73 @@ def save_cari_bilgi(data):
         if not os.path.exists(MASTER_CARI_BILGILER_PATH):
             initialize_cari_bilgiler_excel()
         
-        # Dosyayı aç
-        wb = openpyxl.load_workbook(MASTER_CARI_BILGILER_PATH)
-        ws = wb.active
+        # Dosya kilidi kontrolü ve retry mekanizması
+        max_retries = 3
+        retry_delay = 1  # saniye
         
-        # Yeni satır ekle
-        new_row = [
-            data.get('tedarikci_adi', ''),
-            data.get('yetkili_kisi', ''),
-            data.get('telefon', ''),
-            data.get('adres', ''),
-            data.get('alim_turu', ''),
-            data.get('mail', ''),
-            data.get('eksik_evraklar', ''),
-            datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        ]
-        ws.append(new_row)
-        
-        # Dosyayı kaydet
-        wb.save(MASTER_CARI_BILGILER_PATH)
-        return True, "Cari bilgi başarıyla kaydedildi!"
+        for attempt in range(max_retries):
+            try:
+                # Dosya kilidi kontrolü - dosyayı yazma modunda açmayı dene
+                with open(MASTER_CARI_BILGILER_PATH, 'a'):
+                    pass
+                
+                # Dosyayı aç
+                wb = openpyxl.load_workbook(MASTER_CARI_BILGILER_PATH)
+                ws = wb.active
+                
+                # Yeni satır ekle
+                new_row = [
+                    data.get('tedarikci_adi', ''),
+                    data.get('yetkili_kisi', ''),
+                    data.get('telefon', ''),
+                    data.get('adres', ''),
+                    data.get('alim_turu', ''),
+                    data.get('mail', ''),
+                    data.get('eksik_evraklar', ''),
+                    datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                ]
+                ws.append(new_row)
+                
+                # Dosyayı kaydet
+                wb.save(MASTER_CARI_BILGILER_PATH)
+                wb.close()
+                return True, "Cari bilgi başarıyla kaydedildi!"
+                
+            except PermissionError as pe:
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    # Son deneme de başarısız oldu
+                    return False, (
+                        "Excel dosyası açık veya erişim izni yok!\n\n"
+                        "Lütfen aşağıdaki adımları deneyin:\n"
+                        "1. Excel dosyasını kapatın (Cari Bilgiler.xlsx)\n"
+                        "2. Dosyanın bulunduğu klasöre yazma izniniz olduğundan emin olun\n"
+                        "3. Tekrar kaydetmeyi deneyin\n\n"
+                        f"Dosya: {MASTER_CARI_BILGILER_PATH}"
+                    )
+            except Exception as inner_e:
+                # Diğer hatalar için hemen çık
+                raise inner_e
+                
     except Exception as e:
-        return False, f"Kaydetme hatası: {str(e)}"
+        error_msg = str(e)
+        if "Permission denied" in error_msg or "PermissionError" in str(type(e)):
+            return False, (
+                "Excel dosyası açık veya erişim izni yok!\n\n"
+                "Lütfen aşağıdaki adımları deneyin:\n"
+                "1. Excel dosyasını kapatın (Cari Bilgiler.xlsx)\n"
+                "2. Dosyanın bulunduğu klasöre yazma izniniz olduğundan emin olun\n"
+                "3. Tekrar kaydetmeyi deneyin\n\n"
+                f"Dosya: {MASTER_CARI_BILGILER_PATH}"
+            )
+        return False, f"Kaydetme hatası: {error_msg}"
 
 def update_cari_bilgi(row_index, data):
     """Var olan cari bilgiyi güncelle"""
+    import time
+    
     try:
         if not OPENPYXL_AVAILABLE:
             return False, "Openpyxl kütüphanesi yüklü değil!"
@@ -7455,27 +7499,65 @@ def update_cari_bilgi(row_index, data):
         if not os.path.exists(MASTER_CARI_BILGILER_PATH):
             return False, "Cari Bilgiler dosyası bulunamadı!"
         
-        # Dosyayı aç
-        wb = openpyxl.load_workbook(MASTER_CARI_BILGILER_PATH)
-        ws = wb.active
+        # Dosya kilidi kontrolü ve retry mekanizması
+        max_retries = 3
+        retry_delay = 1  # saniye
         
-        # Satır indeksini güncelle (Excel 1-indexed, başlık satırı var)
-        excel_row = row_index + 2  # +1 for header, +1 for 0-indexed to 1-indexed
-        
-        # Satırı güncelle
-        ws.cell(row=excel_row, column=1).value = data.get('tedarikci_adi', '')
-        ws.cell(row=excel_row, column=2).value = data.get('yetkili_kisi', '')
-        ws.cell(row=excel_row, column=3).value = data.get('telefon', '')
-        ws.cell(row=excel_row, column=4).value = data.get('adres', '')
-        ws.cell(row=excel_row, column=5).value = data.get('alim_turu', '')
-        ws.cell(row=excel_row, column=6).value = data.get('mail', '')
-        ws.cell(row=excel_row, column=7).value = data.get('eksik_evraklar', '')
-        
-        # Dosyayı kaydet
-        wb.save(MASTER_CARI_BILGILER_PATH)
-        return True, "Cari bilgi başarıyla güncellendi!"
+        for attempt in range(max_retries):
+            try:
+                # Dosya kilidi kontrolü
+                with open(MASTER_CARI_BILGILER_PATH, 'a'):
+                    pass
+                
+                # Dosyayı aç
+                wb = openpyxl.load_workbook(MASTER_CARI_BILGILER_PATH)
+                ws = wb.active
+                
+                # Satır indeksini güncelle (Excel 1-indexed, başlık satırı var)
+                excel_row = row_index + 2  # +1 for header, +1 for 0-indexed to 1-indexed
+                
+                # Satırı güncelle
+                ws.cell(row=excel_row, column=1).value = data.get('tedarikci_adi', '')
+                ws.cell(row=excel_row, column=2).value = data.get('yetkili_kisi', '')
+                ws.cell(row=excel_row, column=3).value = data.get('telefon', '')
+                ws.cell(row=excel_row, column=4).value = data.get('adres', '')
+                ws.cell(row=excel_row, column=5).value = data.get('alim_turu', '')
+                ws.cell(row=excel_row, column=6).value = data.get('mail', '')
+                ws.cell(row=excel_row, column=7).value = data.get('eksik_evraklar', '')
+                
+                # Dosyayı kaydet
+                wb.save(MASTER_CARI_BILGILER_PATH)
+                wb.close()
+                return True, "Cari bilgi başarıyla güncellendi!"
+                
+            except PermissionError as pe:
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    return False, (
+                        "Excel dosyası açık veya erişim izni yok!\n\n"
+                        "Lütfen aşağıdaki adımları deneyin:\n"
+                        "1. Excel dosyasını kapatın (Cari Bilgiler.xlsx)\n"
+                        "2. Dosyanın bulunduğu klasöre yazma izniniz olduğundan emin olun\n"
+                        "3. Tekrar kaydetmeyi deneyin\n\n"
+                        f"Dosya: {MASTER_CARI_BILGILER_PATH}"
+                    )
+            except Exception as inner_e:
+                raise inner_e
+                
     except Exception as e:
-        return False, f"Güncelleme hatası: {str(e)}"
+        error_msg = str(e)
+        if "Permission denied" in error_msg or "PermissionError" in str(type(e)):
+            return False, (
+                "Excel dosyası açık veya erişim izni yok!\n\n"
+                "Lütfen aşağıdaki adımları deneyin:\n"
+                "1. Excel dosyasını kapatın (Cari Bilgiler.xlsx)\n"
+                "2. Dosyanın bulunduğu klasöre yazma izniniz olduğundan emin olun\n"
+                "3. Tekrar kaydetmeyi deneyin\n\n"
+                f"Dosya: {MASTER_CARI_BILGILER_PATH}"
+            )
+        return False, f"Güncelleme hatası: {error_msg}"
 
 def check_waste_disposal_compliance(supplier_name):
     """Tedarikçi için çevre uyumluluk kontrolü yap"""
