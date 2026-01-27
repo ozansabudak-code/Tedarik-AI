@@ -36,6 +36,16 @@ import schedule # Zamanlanmış görevler için
 from collections import defaultdict # Activity tracking için
 from datetime import timedelta # Zaman hesaplamaları için
 
+# Openpyxl kütüphanesi kontrolü (Excel yönetimi için)
+try:
+    import openpyxl
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
+    print("Openpyxl kütüphanesi bulunamadı. Excel özellikleri çalışmayacak.")
+
 # MySQL bağlantısı için
 try:
     import mysql.connector
@@ -106,6 +116,7 @@ MASTER_TEDARIK_PATH = r"X:\01.Public\TEDARİKÇİ PERFORMANS\Tedarik\Tedarik AI.
 MASTER_REKLAMASYON_PATH = r"X:\01.Public\TEDARİKÇİ PERFORMANS\Reklamasyon\Reklamasyon.xlsx"
 MASTER_SERTIFIKA_PATH = r"X:\01.Public\TEDARİKÇİ PERFORMANS\Sertifikalar"
 MASTER_SOZLESME_PATH = r"X:\01.Public\TEDARİKÇİ PERFORMANS\Sözleşme"
+MASTER_CARI_BILGILER_PATH = r"X:\01.Public\TEDARİKÇİ PERFORMANS\Cari Bilgiler\Cari Bilgiler.xlsx"
 
 # MySQL Bağlantı Yapılandırması
 MYSQL_CONFIG = {
@@ -7333,6 +7344,139 @@ Cevabını JSON formatında ver."""
     except Exception as e:
         return {"error": str(e)}
 
+def initialize_cari_bilgiler_excel():
+    """Cari Bilgiler Excel dosyasını oluştur veya kontrol et"""
+    try:
+        if not OPENPYXL_AVAILABLE:
+            print("Openpyxl kütüphanesi yüklü değil!")
+            return False
+        
+        # Dosya yoksa oluştur
+        if not os.path.exists(MASTER_CARI_BILGILER_PATH):
+            # Klasörü oluştur
+            os.makedirs(os.path.dirname(MASTER_CARI_BILGILER_PATH), exist_ok=True)
+            
+            # Yeni workbook oluştur
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Cari Bilgiler"
+            
+            # Başlıkları ekle
+            headers = ["Tedarikçi Adı", "Yetkili Kişi", "Telefon", "Adres", "Alım Türü", "Mail", "Eksik Evraklar", "Kayıt Tarihi"]
+            ws.append(headers)
+            
+            # Başlıkları formatla
+            header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            header_font = Font(bold=True, color="FFFFFF")
+            header_alignment = Alignment(horizontal="center", vertical="center")
+            
+            for cell in ws[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = header_alignment
+            
+            # Sütun genişliklerini ayarla
+            ws.column_dimensions['A'].width = 30  # Tedarikçi Adı
+            ws.column_dimensions['B'].width = 25  # Yetkili Kişi
+            ws.column_dimensions['C'].width = 20  # Telefon
+            ws.column_dimensions['D'].width = 40  # Adres
+            ws.column_dimensions['E'].width = 20  # Alım Türü
+            ws.column_dimensions['F'].width = 30  # Mail
+            ws.column_dimensions['G'].width = 40  # Eksik Evraklar
+            ws.column_dimensions['H'].width = 20  # Kayıt Tarihi
+            
+            wb.save(MASTER_CARI_BILGILER_PATH)
+            print(f"Cari Bilgiler dosyası oluşturuldu: {MASTER_CARI_BILGILER_PATH}")
+        
+        return True
+    except Exception as e:
+        print(f"Cari Bilgiler Excel dosyası oluşturma hatası: {e}")
+        return False
+
+def load_cari_bilgiler():
+    """Cari Bilgiler Excel dosyasından verileri yükle"""
+    try:
+        if not OPENPYXL_AVAILABLE:
+            return []
+        
+        if not os.path.exists(MASTER_CARI_BILGILER_PATH):
+            initialize_cari_bilgiler_excel()
+            return []
+        
+        # Pandas ile oku (daha kolay)
+        df = pd.read_excel(MASTER_CARI_BILGILER_PATH)
+        
+        # DataFrame'i liste olarak döndür
+        records = df.to_dict('records')
+        return records
+    except Exception as e:
+        print(f"Cari Bilgiler yükleme hatası: {e}")
+        return []
+
+def save_cari_bilgi(data):
+    """Yeni cari bilgiyi Excel dosyasına kaydet"""
+    try:
+        if not OPENPYXL_AVAILABLE:
+            return False, "Openpyxl kütüphanesi yüklü değil!"
+        
+        # Dosya yoksa oluştur
+        if not os.path.exists(MASTER_CARI_BILGILER_PATH):
+            initialize_cari_bilgiler_excel()
+        
+        # Dosyayı aç
+        wb = openpyxl.load_workbook(MASTER_CARI_BILGILER_PATH)
+        ws = wb.active
+        
+        # Yeni satır ekle
+        new_row = [
+            data.get('tedarikci_adi', ''),
+            data.get('yetkili_kisi', ''),
+            data.get('telefon', ''),
+            data.get('adres', ''),
+            data.get('alim_turu', ''),
+            data.get('mail', ''),
+            data.get('eksik_evraklar', ''),
+            datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        ]
+        ws.append(new_row)
+        
+        # Dosyayı kaydet
+        wb.save(MASTER_CARI_BILGILER_PATH)
+        return True, "Cari bilgi başarıyla kaydedildi!"
+    except Exception as e:
+        return False, f"Kaydetme hatası: {str(e)}"
+
+def update_cari_bilgi(row_index, data):
+    """Var olan cari bilgiyi güncelle"""
+    try:
+        if not OPENPYXL_AVAILABLE:
+            return False, "Openpyxl kütüphanesi yüklü değil!"
+        
+        if not os.path.exists(MASTER_CARI_BILGILER_PATH):
+            return False, "Cari Bilgiler dosyası bulunamadı!"
+        
+        # Dosyayı aç
+        wb = openpyxl.load_workbook(MASTER_CARI_BILGILER_PATH)
+        ws = wb.active
+        
+        # Satır indeksini güncelle (Excel 1-indexed, başlık satırı var)
+        excel_row = row_index + 2  # +1 for header, +1 for 0-indexed to 1-indexed
+        
+        # Satırı güncelle
+        ws.cell(row=excel_row, column=1).value = data.get('tedarikci_adi', '')
+        ws.cell(row=excel_row, column=2).value = data.get('yetkili_kisi', '')
+        ws.cell(row=excel_row, column=3).value = data.get('telefon', '')
+        ws.cell(row=excel_row, column=4).value = data.get('adres', '')
+        ws.cell(row=excel_row, column=5).value = data.get('alim_turu', '')
+        ws.cell(row=excel_row, column=6).value = data.get('mail', '')
+        ws.cell(row=excel_row, column=7).value = data.get('eksik_evraklar', '')
+        
+        # Dosyayı kaydet
+        wb.save(MASTER_CARI_BILGILER_PATH)
+        return True, "Cari bilgi başarıyla güncellendi!"
+    except Exception as e:
+        return False, f"Güncelleme hatası: {str(e)}"
+
 def check_waste_disposal_compliance(supplier_name):
     """Tedarikçi için çevre uyumluluk kontrolü yap"""
     import glob
@@ -7828,6 +7972,562 @@ def init_compliance_center_tab():
     tk.Button(btn_container, text="📧 Tedarikçiye Email Gönder", font=("Segoe UI", 10, "bold"),
              bg="#e67e22", fg="white", relief="raised", bd=2, cursor="hand2",
              padx=15, pady=8, command=send_email).pack(side="left", padx=5)
+    
+    # 📋 CARİ BİLGİLER YÖNETİMİ VE MAİL PANELİ
+    cari_panel = tk.LabelFrame(content, text="📋 Cari Bilgiler Kayıt ve Mail Paneli", 
+                               font=("Segoe UI", 13, "bold"), bg="white", fg="#16a085",
+                               padx=15, pady=15, relief="solid", bd=2)
+    cari_panel.pack(fill="both", expand=True, pady=(15, 15))
+    
+    # Üst kısım: Form ve Liste (2 sütun)
+    top_section = tk.Frame(cari_panel, bg="white")
+    top_section.pack(fill="both", expand=True, pady=5)
+    top_section.grid_columnconfigure(0, weight=1)
+    top_section.grid_columnconfigure(1, weight=2)
+    
+    # Sol: Cari Bilgi Giriş Formu
+    form_section = tk.LabelFrame(top_section, text="➕ Yeni Cari Bilgisi Ekle", 
+                                 font=("Segoe UI", 11, "bold"), bg="white", fg="#2980b9",
+                                 padx=10, pady=10, relief="solid", bd=1)
+    form_section.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+    
+    # Form alanları
+    form_frame = tk.Frame(form_section, bg="white")
+    form_frame.pack(fill="both", expand=True)
+    
+    # Tedarikçi Adı
+    tk.Label(form_frame, text="Tedarikçi Adı:", font=("Segoe UI", 9, "bold"),
+             bg="white").grid(row=0, column=0, sticky="w", padx=5, pady=3)
+    tedarikci_adi_entry = tk.Entry(form_frame, font=("Segoe UI", 9), width=25)
+    tedarikci_adi_entry.grid(row=0, column=1, padx=5, pady=3, sticky="ew")
+    
+    # Yetkili Kişi
+    tk.Label(form_frame, text="Yetkili Kişi:", font=("Segoe UI", 9, "bold"),
+             bg="white").grid(row=1, column=0, sticky="w", padx=5, pady=3)
+    yetkili_kisi_entry = tk.Entry(form_frame, font=("Segoe UI", 9), width=25)
+    yetkili_kisi_entry.grid(row=1, column=1, padx=5, pady=3, sticky="ew")
+    
+    # Telefon
+    tk.Label(form_frame, text="Telefon:", font=("Segoe UI", 9, "bold"),
+             bg="white").grid(row=2, column=0, sticky="w", padx=5, pady=3)
+    telefon_entry = tk.Entry(form_frame, font=("Segoe UI", 9), width=25)
+    telefon_entry.grid(row=2, column=1, padx=5, pady=3, sticky="ew")
+    
+    # Mail
+    tk.Label(form_frame, text="Mail:", font=("Segoe UI", 9, "bold"),
+             bg="white").grid(row=3, column=0, sticky="w", padx=5, pady=3)
+    mail_entry = tk.Entry(form_frame, font=("Segoe UI", 9), width=25)
+    mail_entry.grid(row=3, column=1, padx=5, pady=3, sticky="ew")
+    
+    # Adres
+    tk.Label(form_frame, text="Adres:", font=("Segoe UI", 9, "bold"),
+             bg="white").grid(row=4, column=0, sticky="nw", padx=5, pady=3)
+    adres_text = tk.Text(form_frame, font=("Segoe UI", 9), width=25, height=3)
+    adres_text.grid(row=4, column=1, padx=5, pady=3, sticky="ew")
+    
+    # Alım Türü
+    tk.Label(form_frame, text="Alım Türü:", font=("Segoe UI", 9, "bold"),
+             bg="white").grid(row=5, column=0, sticky="w", padx=5, pady=3)
+    alim_turu_var = tk.StringVar(value="Kumaş")
+    alim_turu_combo = ttk.Combobox(form_frame, textvariable=alim_turu_var, 
+                                   values=["Kumaş", "Fire", "Tekleme", "Aksesuar", "Diğer"],
+                                   state="readonly", font=("Segoe UI", 9), width=23)
+    alim_turu_combo.grid(row=5, column=1, padx=5, pady=3, sticky="ew")
+    
+    # Eksik Evraklar (Checkbox'lar)
+    tk.Label(form_frame, text="Eksik Evraklar:", font=("Segoe UI", 9, "bold"),
+             bg="white").grid(row=6, column=0, sticky="nw", padx=5, pady=3)
+    
+    eksik_evrak_frame = tk.Frame(form_frame, bg="white")
+    eksik_evrak_frame.grid(row=6, column=1, padx=5, pady=3, sticky="w")
+    
+    evrak_checkboxes = {}
+    evrak_tipleri = ["Sözleşme", "Sertifika", "Vergi Levhası", "İmza Sirküleri", "Fatura Bilgileri"]
+    for i, evrak in enumerate(evrak_tipleri):
+        var = tk.BooleanVar()
+        evrak_checkboxes[evrak] = var
+        tk.Checkbutton(eksik_evrak_frame, text=evrak, variable=var, 
+                      font=("Segoe UI", 8), bg="white").grid(row=i, column=0, sticky="w")
+    
+    form_frame.grid_columnconfigure(1, weight=1)
+    
+    # Form butonları
+    form_btn_frame = tk.Frame(form_section, bg="white")
+    form_btn_frame.pack(fill="x", pady=(10, 0))
+    
+    def clear_cari_form():
+        """Formu temizle"""
+        tedarikci_adi_entry.delete(0, tk.END)
+        yetkili_kisi_entry.delete(0, tk.END)
+        telefon_entry.delete(0, tk.END)
+        mail_entry.delete(0, tk.END)
+        adres_text.delete("1.0", tk.END)
+        alim_turu_var.set("Kumaş")
+        for var in evrak_checkboxes.values():
+            var.set(False)
+    
+    def save_cari_form():
+        """Formu kaydet"""
+        # Verileri topla
+        tedarikci = tedarikci_adi_entry.get().strip()
+        yetkili = yetkili_kisi_entry.get().strip()
+        telefon = telefon_entry.get().strip()
+        mail = mail_entry.get().strip()
+        adres = adres_text.get("1.0", tk.END).strip()
+        alim_turu = alim_turu_var.get()
+        
+        # Eksik evrakları topla
+        eksik_evraklar = [evrak for evrak, var in evrak_checkboxes.items() if var.get()]
+        eksik_evrak_str = ", ".join(eksik_evraklar) if eksik_evraklar else "Yok"
+        
+        # Zorunlu alanları kontrol et
+        if not tedarikci:
+            messagebox.showwarning("Uyarı", "Tedarikçi adı zorunludur!")
+            return
+        
+        if not mail:
+            messagebox.showwarning("Uyarı", "Mail adresi zorunludur!")
+            return
+        
+        # Veriyi kaydet
+        data = {
+            'tedarikci_adi': tedarikci,
+            'yetkili_kisi': yetkili,
+            'telefon': telefon,
+            'adres': adres,
+            'alim_turu': alim_turu,
+            'mail': mail,
+            'eksik_evraklar': eksik_evrak_str
+        }
+        
+        success, message = save_cari_bilgi(data)
+        
+        if success:
+            messagebox.showinfo("Başarılı", message)
+            clear_cari_form()
+            refresh_cari_list()
+            activity_logger.log_event("CARI_BILGI_SAVED", f"Tedarikçi: {tedarikci}", "Tedarikçi Uyumluluk")
+        else:
+            messagebox.showerror("Hata", message)
+    
+    tk.Button(form_btn_frame, text="💾 Kaydet", font=("Segoe UI", 9, "bold"),
+             bg="#27ae60", fg="white", cursor="hand2", padx=10, pady=5,
+             command=save_cari_form).pack(side="left", padx=5)
+    
+    tk.Button(form_btn_frame, text="🔄 Temizle", font=("Segoe UI", 9, "bold"),
+             bg="#95a5a6", fg="white", cursor="hand2", padx=10, pady=5,
+             command=clear_cari_form).pack(side="left", padx=5)
+    
+    # Sağ: Cari Bilgileri Listesi
+    list_section = tk.LabelFrame(top_section, text="📋 Kayıtlı Cari Bilgileri", 
+                                 font=("Segoe UI", 11, "bold"), bg="white", fg="#c0392b",
+                                 padx=10, pady=10, relief="solid", bd=1)
+    list_section.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
+    
+    # Arama ve filtre çubuğu
+    search_frame = tk.Frame(list_section, bg="white")
+    search_frame.pack(fill="x", pady=(0, 5))
+    
+    tk.Label(search_frame, text="🔍 Ara:", font=("Segoe UI", 9, "bold"),
+             bg="white").pack(side="left", padx=5)
+    search_var = tk.StringVar()
+    search_entry = tk.Entry(search_frame, textvariable=search_var, font=("Segoe UI", 9), width=20)
+    search_entry.pack(side="left", padx=5)
+    
+    tk.Label(search_frame, text="Alım Türü:", font=("Segoe UI", 9, "bold"),
+             bg="white").pack(side="left", padx=(10, 5))
+    filter_var = tk.StringVar(value="Tümü")
+    filter_combo = ttk.Combobox(search_frame, textvariable=filter_var,
+                                values=["Tümü", "Kumaş", "Fire", "Tekleme", "Aksesuar", "Diğer"],
+                                state="readonly", font=("Segoe UI", 9), width=12)
+    filter_combo.pack(side="left", padx=5)
+    
+    def apply_filter():
+        refresh_cari_list()
+    
+    tk.Button(search_frame, text="Ara", font=("Segoe UI", 8, "bold"),
+             bg="#3498db", fg="white", cursor="hand2", padx=8, pady=2,
+             command=apply_filter).pack(side="left", padx=5)
+    
+    tk.Button(search_frame, text="🔄", font=("Segoe UI", 8, "bold"),
+             bg="#95a5a6", fg="white", cursor="hand2", padx=6, pady=2,
+             command=lambda: (search_var.set(""), filter_var.set("Tümü"), refresh_cari_list())).pack(side="left", padx=2)
+    
+    # Treeview için container
+    tree_container = tk.Frame(list_section, bg="white")
+    tree_container.pack(fill="both", expand=True)
+    
+    # Scrollbar'lar
+    tree_scroll_y = ttk.Scrollbar(tree_container, orient="vertical")
+    tree_scroll_y.pack(side="right", fill="y")
+    
+    tree_scroll_x = ttk.Scrollbar(tree_container, orient="horizontal")
+    tree_scroll_x.pack(side="bottom", fill="x")
+    
+    # Treeview
+    columns = ("Tedarikçi", "Yetkili", "Telefon", "Mail", "Alım Türü", "Eksik Evraklar", "Tarih")
+    cari_tree = ttk.Treeview(tree_container, columns=columns, show="tree headings", 
+                            yscrollcommand=tree_scroll_y.set, xscrollcommand=tree_scroll_x.set,
+                            height=10)
+    cari_tree.pack(fill="both", expand=True)
+    
+    tree_scroll_y.config(command=cari_tree.yview)
+    tree_scroll_x.config(command=cari_tree.xview)
+    
+    # Sütun ayarları
+    cari_tree.column("#0", width=40, minwidth=40)
+    cari_tree.column("Tedarikçi", width=150, minwidth=100)
+    cari_tree.column("Yetkili", width=120, minwidth=100)
+    cari_tree.column("Telefon", width=100, minwidth=80)
+    cari_tree.column("Mail", width=150, minwidth=100)
+    cari_tree.column("Alım Türü", width=100, minwidth=80)
+    cari_tree.column("Eksik Evraklar", width=200, minwidth=150)
+    cari_tree.column("Tarih", width=130, minwidth=100)
+    
+    # Başlıklar
+    cari_tree.heading("#0", text="☑")
+    cari_tree.heading("Tedarikçi", text="Tedarikçi Adı")
+    cari_tree.heading("Yetkili", text="Yetkili Kişi")
+    cari_tree.heading("Telefon", text="Telefon")
+    cari_tree.heading("Mail", text="Mail")
+    cari_tree.heading("Alım Türü", text="Alım Türü")
+    cari_tree.heading("Eksik Evraklar", text="Eksik Evraklar")
+    cari_tree.heading("Tarih", text="Kayıt Tarihi")
+    
+    def refresh_cari_list():
+        """Cari listesini yenile"""
+        # Mevcut kayıtları temizle
+        for item in cari_tree.get_children():
+            cari_tree.delete(item)
+        
+        # Verileri yükle
+        records = load_cari_bilgiler()
+        
+        # Filtreleri uygula
+        search_text = search_var.get().strip().lower()
+        filter_alim = filter_var.get()
+        
+        for idx, record in enumerate(records):
+            # Arama filtresi
+            if search_text:
+                tedarikci = str(record.get('Tedarikçi Adı', '')).lower()
+                yetkili = str(record.get('Yetkili Kişi', '')).lower()
+                if search_text not in tedarikci and search_text not in yetkili:
+                    continue
+            
+            # Alım türü filtresi
+            if filter_alim != "Tümü":
+                if str(record.get('Alım Türü', '')) != filter_alim:
+                    continue
+            
+            # Kayıt ekle
+            values = (
+                str(record.get('Tedarikçi Adı', '')),
+                str(record.get('Yetkili Kişi', '')),
+                str(record.get('Telefon', '')),
+                str(record.get('Mail', '')),
+                str(record.get('Alım Türü', '')),
+                str(record.get('Eksik Evraklar', '')),
+                str(record.get('Kayıt Tarihi', ''))
+            )
+            cari_tree.insert("", "end", text="☐", values=values, tags=(idx,))
+    
+    # İlk yükleme
+    refresh_cari_list()
+    
+    # Alt kısım: Mail Gönderim Paneli
+    mail_panel_section = tk.LabelFrame(cari_panel, text="📧 Mail Gönderim Paneli", 
+                                      font=("Segoe UI", 11, "bold"), bg="white", fg="#d35400",
+                                      padx=10, pady=10, relief="solid", bd=1)
+    mail_panel_section.pack(fill="both", expand=True, pady=(5, 0))
+    
+    mail_frame = tk.Frame(mail_panel_section, bg="white")
+    mail_frame.pack(fill="both", expand=True)
+    
+    # Mail şablonu seçimi
+    tk.Label(mail_frame, text="Mail Şablonu:", font=("Segoe UI", 9, "bold"),
+             bg="white").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+    
+    mail_template_var = tk.StringVar(value="Evrak Eksikliği Bildirimi")
+    mail_templates = [
+        "Evrak Eksikliği Bildirimi",
+        "Sözleşme Yenileme Hatırlatması",
+        "Sertifika Güncellemesi",
+        "Genel Bilgilendirme"
+    ]
+    mail_template_combo = ttk.Combobox(mail_frame, textvariable=mail_template_var,
+                                       values=mail_templates, state="readonly",
+                                       font=("Segoe UI", 9), width=30)
+    mail_template_combo.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+    
+    # Mail konusu
+    tk.Label(mail_frame, text="Konu:", font=("Segoe UI", 9, "bold"),
+             bg="white").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+    mail_subject_entry = tk.Entry(mail_frame, font=("Segoe UI", 9), width=50)
+    mail_subject_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+    mail_subject_entry.insert(0, "Tedarikçi Evrak Eksikliği Bildirimi")
+    
+    # Mail içeriği
+    tk.Label(mail_frame, text="İçerik:", font=("Segoe UI", 9, "bold"),
+             bg="white").grid(row=2, column=0, sticky="nw", padx=5, pady=5)
+    
+    mail_content_frame = tk.Frame(mail_frame, bg="white")
+    mail_content_frame.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+    
+    mail_content_scroll = tk.Scrollbar(mail_content_frame, orient="vertical")
+    mail_content_scroll.pack(side="right", fill="y")
+    
+    mail_content_text = tk.Text(mail_content_frame, font=("Segoe UI", 9), 
+                               height=8, width=60, wrap="word",
+                               yscrollcommand=mail_content_scroll.set)
+    mail_content_text.pack(fill="both", expand=True)
+    mail_content_scroll.config(command=mail_content_text.yview)
+    
+    # Varsayılan mail içeriği
+    default_mail_content = """Sayın {{Yetkili Kişi}},
+
+{{Tedarikçi Adı}} firması için bazı evrakların eksik olduğunu tespit ettik.
+
+Eksik Evraklar:
+{{Eksik Evraklar}}
+
+Lütfen eksik evrakları en kısa sürede tamamlayarak bize iletmenizi rica ederiz.
+
+Saygılarımızla,
+Tedarikçi Uyumluluk Merkezi"""
+    
+    mail_content_text.insert("1.0", default_mail_content)
+    
+    mail_frame.grid_columnconfigure(1, weight=1)
+    
+    def update_mail_template():
+        """Mail şablonunu güncelle"""
+        template = mail_template_var.get()
+        
+        templates_content = {
+            "Evrak Eksikliği Bildirimi": {
+                "subject": "Tedarikçi Evrak Eksikliği Bildirimi",
+                "content": default_mail_content
+            },
+            "Sözleşme Yenileme Hatırlatması": {
+                "subject": "Sözleşme Yenileme Hatırlatması",
+                "content": """Sayın {{Yetkili Kişi}},
+
+{{Tedarikçi Adı}} firması ile yapılan sözleşmenin yenileme zamanı yaklaşmaktadır.
+
+Lütfen sözleşme yenileme işlemleri için bizimle iletişime geçiniz.
+
+Saygılarımızla,
+Tedarikçi Uyumluluk Merkezi"""
+            },
+            "Sertifika Güncellemesi": {
+                "subject": "Sertifika Güncelleme Talebi",
+                "content": """Sayın {{Yetkili Kişi}},
+
+{{Tedarikçi Adı}} firmasının sertifikalarının güncellenme zamanı gelmiştir.
+
+Lütfen güncel sertifikalarınızı en kısa sürede bize iletiniz.
+
+Saygılarımızla,
+Tedarikçi Uyumluluk Merkezi"""
+            },
+            "Genel Bilgilendirme": {
+                "subject": "Genel Bilgilendirme",
+                "content": """Sayın {{Yetkili Kişi}},
+
+{{Tedarikçi Adı}} firması için genel bilgilendirme.
+
+[Buraya mesajınızı yazınız]
+
+Saygılarımızla,
+Tedarikçi Uyumluluk Merkezi"""
+            }
+        }
+        
+        if template in templates_content:
+            mail_subject_entry.delete(0, tk.END)
+            mail_subject_entry.insert(0, templates_content[template]["subject"])
+            
+            mail_content_text.delete("1.0", tk.END)
+            mail_content_text.insert("1.0", templates_content[template]["content"])
+    
+    mail_template_combo.bind("<<ComboboxSelected>>", lambda e: update_mail_template())
+    
+    # Mail butonları
+    mail_btn_frame = tk.Frame(mail_panel_section, bg="white")
+    mail_btn_frame.pack(fill="x", pady=(10, 0))
+    
+    def send_single_email():
+        """Seçili tedarikçiye mail gönder"""
+        selected_items = cari_tree.selection()
+        
+        if not selected_items:
+            messagebox.showwarning("Uyarı", "Lütfen mail göndermek için bir tedarikçi seçin!")
+            return
+        
+        subject = mail_subject_entry.get().strip()
+        content = mail_content_text.get("1.0", tk.END).strip()
+        
+        if not subject or not content:
+            messagebox.showwarning("Uyarı", "Lütfen mail konusu ve içeriğini doldurun!")
+            return
+        
+        success_count = 0
+        fail_count = 0
+        
+        for item in selected_items:
+            values = cari_tree.item(item)["values"]
+            tedarikci = values[0]
+            yetkili = values[1]
+            mail = values[3]
+            eksik_evraklar = values[5]
+            
+            # Mail içeriğini kişiselleştir
+            personalized_content = content.replace("{{Tedarikçi Adı}}", tedarikci)
+            personalized_content = personalized_content.replace("{{Yetkili Kişi}}", yetkili)
+            personalized_content = personalized_content.replace("{{Eksik Evraklar}}", eksik_evraklar)
+            
+            try:
+                # SMTP ile mail gönder
+                msg = MIMEMultipart()
+                msg['From'] = GMAIL_USER
+                msg['To'] = mail
+                msg['Subject'] = subject
+                
+                # HTML formatında mail içeriği
+                html_content = f"""
+                <html>
+                <body style="font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #333;">
+                    <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px;">
+                        <div style="background-color: #16a085; color: white; padding: 15px; border-radius: 5px 5px 0 0;">
+                            <h2 style="margin: 0;">🏛️ Tedarikçi Uyumluluk Merkezi</h2>
+                        </div>
+                        <div style="padding: 20px; background-color: #f9f9f9;">
+                            <pre style="font-family: 'Segoe UI', Arial, sans-serif; white-space: pre-wrap; word-wrap: break-word;">{personalized_content}</pre>
+                        </div>
+                        <div style="text-align: center; padding: 10px; background-color: #ecf0f1; border-radius: 0 0 5px 5px; font-size: 12px; color: #7f8c8d;">
+                            Bu email Tedarikçi Uyumluluk Sistemi tarafından otomatik oluşturulmuştur.
+                        </div>
+                    </div>
+                </body>
+                </html>
+                """
+                
+                msg.attach(MIMEText(html_content, 'html'))
+                
+                # SMTP sunucusuna bağlan ve gönder
+                server = smtplib.SMTP('smtp.gmail.com', 587)
+                server.starttls()
+                server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                server.send_message(msg)
+                server.quit()
+                
+                success_count += 1
+                activity_logger.log_email_sent(mail, subject, "Tedarikçi Uyumluluk")
+                
+            except Exception as e:
+                fail_count += 1
+                print(f"Mail gönderme hatası ({mail}): {e}")
+        
+        if success_count > 0:
+            messagebox.showinfo("Başarılı", f"{success_count} mail başarıyla gönderildi!")
+        
+        if fail_count > 0:
+            messagebox.showwarning("Uyarı", f"{fail_count} mail gönderilemedi!")
+    
+    def send_bulk_email():
+        """Tüm kayıtlı tedarikçilere toplu mail gönder"""
+        # Filtrelenmiş tüm kayıtlara gönder
+        records = cari_tree.get_children()
+        
+        if not records:
+            messagebox.showwarning("Uyarı", "Gönderilecek kayıt bulunamadı!")
+            return
+        
+        result = messagebox.askyesno("Toplu Mail Gönderimi", 
+                                    f"{len(records)} tedarikçiye toplu mail göndermek istediğinize emin misiniz?")
+        
+        if not result:
+            return
+        
+        subject = mail_subject_entry.get().strip()
+        content = mail_content_text.get("1.0", tk.END).strip()
+        
+        if not subject or not content:
+            messagebox.showwarning("Uyarı", "Lütfen mail konusu ve içeriğini doldurun!")
+            return
+        
+        success_count = 0
+        fail_count = 0
+        
+        for item in records:
+            values = cari_tree.item(item)["values"]
+            tedarikci = values[0]
+            yetkili = values[1]
+            mail = values[3]
+            eksik_evraklar = values[5]
+            
+            # Mail içeriğini kişiselleştir
+            personalized_content = content.replace("{{Tedarikçi Adı}}", tedarikci)
+            personalized_content = personalized_content.replace("{{Yetkili Kişi}}", yetkili)
+            personalized_content = personalized_content.replace("{{Eksik Evraklar}}", eksik_evraklar)
+            
+            try:
+                # SMTP ile mail gönder
+                msg = MIMEMultipart()
+                msg['From'] = GMAIL_USER
+                msg['To'] = mail
+                msg['Subject'] = subject
+                
+                # HTML formatında mail içeriği
+                html_content = f"""
+                <html>
+                <body style="font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #333;">
+                    <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px;">
+                        <div style="background-color: #16a085; color: white; padding: 15px; border-radius: 5px 5px 0 0;">
+                            <h2 style="margin: 0;">🏛️ Tedarikçi Uyumluluk Merkezi</h2>
+                        </div>
+                        <div style="padding: 20px; background-color: #f9f9f9;">
+                            <pre style="font-family: 'Segoe UI', Arial, sans-serif; white-space: pre-wrap; word-wrap: break-word;">{personalized_content}</pre>
+                        </div>
+                        <div style="text-align: center; padding: 10px; background-color: #ecf0f1; border-radius: 0 0 5px 5px; font-size: 12px; color: #7f8c8d;">
+                            Bu email Tedarikçi Uyumluluk Sistemi tarafından otomatik oluşturulmuştur.
+                        </div>
+                    </div>
+                </body>
+                </html>
+                """
+                
+                msg.attach(MIMEText(html_content, 'html'))
+                
+                # SMTP sunucusuna bağlan ve gönder
+                server = smtplib.SMTP('smtp.gmail.com', 587)
+                server.starttls()
+                server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                server.send_message(msg)
+                server.quit()
+                
+                success_count += 1
+                activity_logger.log_email_sent(mail, subject, "Tedarikçi Uyumluluk")
+                
+            except Exception as e:
+                fail_count += 1
+                print(f"Mail gönderme hatası ({mail}): {e}")
+        
+        messagebox.showinfo("Toplu Mail Gönderimi Tamamlandı", 
+                          f"Başarılı: {success_count}\nBaşarısız: {fail_count}")
+    
+    tk.Button(mail_btn_frame, text="📧 Seçili Tedarikçilere Gönder", font=("Segoe UI", 10, "bold"),
+             bg="#27ae60", fg="white", cursor="hand2", padx=15, pady=8,
+             command=send_single_email).pack(side="left", padx=5)
+    
+    tk.Button(mail_btn_frame, text="📧 Toplu Mail Gönder (Tüm Liste)", font=("Segoe UI", 10, "bold"),
+             bg="#e74c3c", fg="white", cursor="hand2", padx=15, pady=8,
+             command=send_bulk_email).pack(side="left", padx=5)
+    
+    tk.Button(mail_btn_frame, text="📋 Excel'i Aç", font=("Segoe UI", 10, "bold"),
+             bg="#3498db", fg="white", cursor="hand2", padx=15, pady=8,
+             command=lambda: os.startfile(MASTER_CARI_BILGILER_PATH) if os.path.exists(MASTER_CARI_BILGILER_PATH) else messagebox.showwarning("Uyarı", "Excel dosyası bulunamadı!")).pack(side="left", padx=5)
     
     # Ana grid container - 2 sütun
     main_grid = tk.Frame(content, bg="#ecf0f1")
