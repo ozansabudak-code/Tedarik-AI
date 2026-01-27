@@ -7406,11 +7406,22 @@ def load_cari_bilgiler():
         # Pandas ile oku (daha kolay)
         df = pd.read_excel(MASTER_CARI_BILGILER_PATH)
         
+        # NaN değerlerini boş string ile değiştir
+        df = df.fillna('')
+        
+        # Sütun isimlerini kontrol et ve düzelt
+        print(f"Excel sütun isimleri: {df.columns.tolist()}")
+        
         # DataFrame'i liste olarak döndür
         records = df.to_dict('records')
+        print(f"Yüklenen kayıt sayısı: {len(records)}")
+        if len(records) > 0:
+            print(f"Örnek kayıt: {records[0]}")
         return records
     except Exception as e:
         print(f"Cari Bilgiler yükleme hatası: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 def save_cari_bilgi(data):
@@ -8250,11 +8261,33 @@ def init_compliance_center_tab():
     columns = ("Tedarikçi", "Yetkili", "Telefon", "Mail", "Alım Türü", "Eksik Evraklar", "Tarih")
     cari_tree = ttk.Treeview(tree_container, columns=columns, show="tree headings", 
                             yscrollcommand=tree_scroll_y.set, xscrollcommand=tree_scroll_x.set,
+                            selectmode="extended",  # Multi-select desteği
                             height=10)
     cari_tree.pack(fill="both", expand=True)
     
     tree_scroll_y.config(command=cari_tree.yview)
     tree_scroll_x.config(command=cari_tree.xview)
+    
+    # Checkbox durumları için dictionary
+    checkbox_states = {}
+    
+    # Treeview'e tıklama eventi ekle (checkbox toggle için)
+    def toggle_checkbox(event):
+        """Checkbox'ı tıklandığında değiştir"""
+        region = cari_tree.identify("region", event.x, event.y)
+        if region == "tree":
+            item = cari_tree.identify_row(event.y)
+            if item:
+                # Checkbox durumunu değiştir
+                current_text = cari_tree.item(item, "text")
+                if current_text == "☐":
+                    cari_tree.item(item, text="☑")
+                    checkbox_states[item] = True
+                else:
+                    cari_tree.item(item, text="☐")
+                    checkbox_states[item] = False
+    
+    cari_tree.bind("<Button-1>", toggle_checkbox)
     
     # Sütun ayarları
     cari_tree.column("#0", width=40, minwidth=40)
@@ -8281,6 +8314,9 @@ def init_compliance_center_tab():
         # Mevcut kayıtları temizle
         for item in cari_tree.get_children():
             cari_tree.delete(item)
+        
+        # Checkbox durumlarını temizle
+        checkbox_states.clear()
         
         # Verileri yükle
         records = load_cari_bilgiler()
@@ -8312,7 +8348,8 @@ def init_compliance_center_tab():
                 str(record.get('Eksik Evraklar', '')),
                 str(record.get('Kayıt Tarihi', ''))
             )
-            cari_tree.insert("", "end", text="☐", values=values, tags=(idx,))
+            item_id = cari_tree.insert("", "end", text="☐", values=values, tags=(idx,))
+            checkbox_states[item_id] = False
     
     # İlk yükleme
     refresh_cari_list()
@@ -8440,11 +8477,17 @@ Tedarikçi Uyumluluk Merkezi"""
     mail_btn_frame.pack(fill="x", pady=(10, 0))
     
     def send_single_email():
-        """Seçili tedarikçiye mail gönder"""
-        selected_items = cari_tree.selection()
+        """Seçili veya işaretli tedarikçiye mail gönder"""
+        # Önce işaretli (checkbox) öğeleri kontrol et
+        checked_items = [item for item, checked in checkbox_states.items() if checked]
         
-        if not selected_items:
-            messagebox.showwarning("Uyarı", "Lütfen mail göndermek için bir tedarikçi seçin!")
+        # Eğer checkbox işaretli değilse, seçili öğeleri kullan
+        if not checked_items:
+            checked_items = cari_tree.selection()
+        
+        if not checked_items:
+            messagebox.showwarning("Uyarı", "Lütfen mail göndermek için tedarikçileri işaretleyin veya seçin!\n\n" +
+                                 "İpucu: Tedarikçi satırının en solundaki kutucuğa tıklayarak işaretleyebilirsiniz.")
             return
         
         subject = mail_subject_entry.get().strip()
@@ -8456,13 +8499,25 @@ Tedarikçi Uyumluluk Merkezi"""
         
         success_count = 0
         fail_count = 0
+        empty_email_count = 0
         
-        for item in selected_items:
+        for item in checked_items:
             values = cari_tree.item(item)["values"]
-            tedarikci = values[0]
-            yetkili = values[1]
-            mail = values[3]
-            eksik_evraklar = values[5]
+            if not values or len(values) < 6:
+                continue
+                
+            tedarikci = str(values[0]) if len(values) > 0 else ''
+            yetkili = str(values[1]) if len(values) > 1 else ''
+            mail = str(values[3]) if len(values) > 3 else ''
+            eksik_evraklar = str(values[5]) if len(values) > 5 else ''
+            
+            # Mail adresini kontrol et
+            mail = mail.strip()
+            if not mail or mail == '' or mail == 'nan':
+                print(f"Boş mail adresi atlaniyor: {tedarikci}")
+                empty_email_count += 1
+                fail_count += 1
+                continue
             
             # Mail içeriğini kişiselleştir
             personalized_content = content.replace("{{Tedarikçi Adı}}", tedarikci)
@@ -8511,8 +8566,18 @@ Tedarikçi Uyumluluk Merkezi"""
                 fail_count += 1
                 print(f"Mail gönderme hatası ({mail}): {e}")
         
+        # Sonuç mesajı
+        result_msg = f"Başarılı: {success_count} mail gönderildi"
+        if fail_count > 0:
+            result_msg += f"\nBaşarısız: {fail_count}"
+        if empty_email_count > 0:
+            result_msg += f"\nBoş mail adresi: {empty_email_count}"
+            result_msg += "\n\nÖnemli: Bazı kayıtlarda mail adresi boş!"
+        
         if success_count > 0:
-            messagebox.showinfo("Başarılı", f"{success_count} mail başarıyla gönderildi!")
+            messagebox.showinfo("Mail Gönderimi Tamamlandı", result_msg)
+        else:
+            messagebox.showwarning("Mail Gönderimi Başarısız", result_msg)
         
         if fail_count > 0:
             messagebox.showwarning("Uyarı", f"{fail_count} mail gönderilemedi!")
@@ -8541,13 +8606,25 @@ Tedarikçi Uyumluluk Merkezi"""
         
         success_count = 0
         fail_count = 0
+        empty_email_count = 0
         
         for item in records:
             values = cari_tree.item(item)["values"]
-            tedarikci = values[0]
-            yetkili = values[1]
-            mail = values[3]
-            eksik_evraklar = values[5]
+            if not values or len(values) < 6:
+                continue
+                
+            tedarikci = str(values[0]) if len(values) > 0 else ''
+            yetkili = str(values[1]) if len(values) > 1 else ''
+            mail = str(values[3]) if len(values) > 3 else ''
+            eksik_evraklar = str(values[5]) if len(values) > 5 else ''
+            
+            # Mail adresini kontrol et
+            mail = mail.strip()
+            if not mail or mail == '' or mail == 'nan':
+                print(f"Boş mail adresi atlanıyor: {tedarikci}")
+                empty_email_count += 1
+                fail_count += 1
+                continue
             
             # Mail içeriğini kişiselleştir
             personalized_content = content.replace("{{Tedarikçi Adı}}", tedarikci)
@@ -8596,8 +8673,13 @@ Tedarikçi Uyumluluk Merkezi"""
                 fail_count += 1
                 print(f"Mail gönderme hatası ({mail}): {e}")
         
-        messagebox.showinfo("Toplu Mail Gönderimi Tamamlandı", 
-                          f"Başarılı: {success_count}\nBaşarısız: {fail_count}")
+        # Sonuç mesajı
+        result_msg = f"Başarılı: {success_count}\nBaşarısız: {fail_count}"
+        if empty_email_count > 0:
+            result_msg += f"\nBoş mail adresi: {empty_email_count}"
+            result_msg += "\n\nÖnemli: Bazı kayıtlarda mail adresi boş olduğu için gönderilemedi!"
+        
+        messagebox.showinfo("Toplu Mail Gönderimi Tamamlandı", result_msg)
     
     tk.Button(mail_btn_frame, text="📧 Seçili Tedarikçilere Gönder", font=("Segoe UI", 10, "bold"),
              bg="#27ae60", fg="white", cursor="hand2", padx=15, pady=8,
