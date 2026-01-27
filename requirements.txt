@@ -1,0 +1,45 @@
+# Core dependencies
+pandas>=1.3.0
+numpy>=1.21.0
+openpyxl>=3.0.9
+
+# GUI
+customtkinter>=5.0.0
+Pillow>=8.3.0
+
+# Data processing and analysis
+rapidfuzz>=2.0.0
+matplotlib>=3.4.0
+
+# Web and APIs
+requests>=2.26.0
+
+# Document handling
+python-docx>=0.8.11
+fpdf>=1.7.2
+PyPDF2>=2.0.0
+
+# Email
+# (uses built-in smtplib)
+
+# Monitoring and scheduling
+watchdog>=2.1.0
+schedule>=1.1.0
+
+# Optional: Database
+mysql-connector-python>=8.0.26
+
+# Optional: Forecasting
+prophet>=1.1
+
+# Optional: Trends
+pytrends>=4.8.0
+
+# Optional: Finance
+yfinance>=0.1.70
+
+# Optional: Maps
+tkintermapview>=1.21
+
+# Optional: AI
+google-generativeai>=0.3.0
