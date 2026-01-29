@@ -8720,9 +8720,10 @@ Tedarikçi Uyumluluk Merkezi"""
     btn_frame = tk.Frame(alarm_frame, bg="white")
     btn_frame.pack(fill="x", pady=5)
     
-    tk.Button(btn_frame, text="🔄 Durumu Güncelle", font=("Segoe UI", 9, "bold"),
+    update_status_btn = tk.Button(btn_frame, text="🔄 Durumu Güncelle", font=("Segoe UI", 9, "bold"),
              bg="#3498db", fg="white", cursor="hand2", padx=15, pady=5,
-             command=update_alarm_display).pack(side="left", padx=5)
+             command=update_alarm_display)
+    update_status_btn.pack(side="left", padx=5)
     
     tk.Button(btn_frame, text="📧 Alarm Maillerini Gönder", font=("Segoe UI", 9, "bold"),
              bg="#e74c3c", fg="white", cursor="hand2", padx=15, pady=5,
@@ -8784,10 +8785,21 @@ Tedarikçi Uyumluluk Merkezi"""
     detail_tree.tag_configure('expiring', background='#fff3cd', foreground='#f39c12')  # Açık sarı
     detail_tree.tag_configure('valid', background='#d4edda', foreground='#27ae60')  # Açık yeşil
     
+    def get_status_and_tag(days_diff):
+        """Helper function to determine status and tag based on days remaining"""
+        if days_diff < 0:
+            status = f"🔴 Süresi Dolmuş ({abs(days_diff)} gün önce)"
+            tag = 'expired'
+        elif days_diff <= 15:
+            status = f"🟡 Yakında Dolacak"
+            tag = 'expiring'
+        else:
+            status = f"🟢 Geçerli"
+            tag = 'valid'
+        return status, tag
+    
     def refresh_detail_table():
         """Detaylı tabloyu yenile"""
-        from datetime import datetime
-        
         # Mevcut kayıtları temizle
         for item in detail_tree.get_children():
             detail_tree.delete(item)
@@ -8799,9 +8811,6 @@ Tedarikçi Uyumluluk Merkezi"""
             tedarikci = record.get('Tedarikçi Adı', '')
             alim_turu = record.get('Alım Türü', '')
             
-            # Fire Sales differentiation - Fire satış tedarikçileri için sertifika zorunluluğu
-            is_fire_sales = alim_turu == 'Fire'
-            
             # Sözleşme bilgileri
             sozlesme_str = str(record.get('Sözleşme Bitiş Tarihi', '')).strip()
             if sozlesme_str and sozlesme_str != '' and sozlesme_str != 'nan':
@@ -8810,20 +8819,12 @@ Tedarikçi Uyumluluk Merkezi"""
                     days_diff = (sozlesme_date - today).days
                     
                     # Durum ve renk belirleme
-                    if days_diff < 0:
-                        status = f"🔴 Süresi Dolmuş ({abs(days_diff)} gün önce)"
-                        tag = 'expired'
-                    elif days_diff <= 15:
-                        status = f"🟡 Yakında Dolacak"
-                        tag = 'expiring'
-                    else:
-                        status = f"🟢 Geçerli"
-                        tag = 'valid'
+                    status, tag = get_status_and_tag(days_diff)
                     
                     values = (tedarikci, "Sözleşme", sozlesme_str[:10], days_diff, status)
                     detail_tree.insert("", "end", values=values, tags=(tag,))
-                except:
-                    pass
+                except (ValueError, IndexError) as e:
+                    print(f"Sözleşme tarihi parse hatası ({tedarikci}): {e}")
             
             # Sertifika bilgileri
             sertifika_str = str(record.get('Sertifika Bitiş Tarihi', '')).strip()
@@ -8833,27 +8834,21 @@ Tedarikçi Uyumluluk Merkezi"""
                     days_diff = (sertifika_date - today).days
                     
                     # Durum ve renk belirleme
-                    if days_diff < 0:
-                        status = f"🔴 Süresi Dolmuş ({abs(days_diff)} gün önce)"
-                        tag = 'expired'
-                    elif days_diff <= 15:
-                        status = f"🟡 Yakında Dolacak"
-                        tag = 'expiring'
-                    else:
-                        status = f"🟢 Geçerli"
-                        tag = 'valid'
+                    status, tag = get_status_and_tag(days_diff)
                     
                     # Fire Sales tedarikçileri için sertifika özellikle vurgulanır
+                    is_fire_sales = alim_turu == 'Fire'
                     tur = "Sertifika (Fire Sales)" if is_fire_sales else "Sertifika"
                     values = (tedarikci, tur, sertifika_str[:10], days_diff, status)
                     detail_tree.insert("", "end", values=values, tags=(tag,))
-                except:
-                    pass
+                except (ValueError, IndexError) as e:
+                    print(f"Sertifika tarihi parse hatası ({tedarikci}): {e}")
     
     # Yenile butonu
-    tk.Button(detail_btn_frame, text="🔄 Tabloyu Yenile", font=("Segoe UI", 9, "bold"),
+    refresh_btn = tk.Button(detail_btn_frame, text="🔄 Tabloyu Yenile", font=("Segoe UI", 9, "bold"),
              bg="#3498db", fg="white", cursor="hand2", padx=15, pady=5,
-             command=refresh_detail_table).pack(side="left", padx=5)
+             command=refresh_detail_table)
+    refresh_btn.pack(side="left", padx=5)
     
     # Açıklama etiketi
     legend_label = tk.Label(detail_btn_frame, 
@@ -8870,11 +8865,8 @@ Tedarikçi Uyumluluk Merkezi"""
         update_alarm_display()
         refresh_detail_table()
     
-    # Alarm panelindeki güncelleme butonunu yeniden yapılandır
-    for widget in btn_frame.winfo_children():
-        if isinstance(widget, tk.Button) and "Durumu Güncelle" in widget.cget("text"):
-            widget.config(command=update_all_displays)
-            break
+    # Alarm panelindeki güncelleme butonunu yeniden yapılandır (stored reference kullanarak)
+    update_status_btn.config(command=update_all_displays)
     
     # Alt kısım: Mail Gönderim Paneli
     mail_panel_section = tk.LabelFrame(cari_panel, text="📧 Mail Gönderim Paneli", 
