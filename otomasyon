@@ -8443,6 +8443,9 @@ def init_compliance_center_tab():
         records = load_cari_bilgiler()
         today = datetime.now().date()
         
+        # Debug logging
+        print(f"\n[ALARM DEBUG] Toplam kayıt sayısı: {len(records)}")
+        
         results = {
             'sozlesme_expired': [],
             'sozlesme_expiring': [],
@@ -8452,13 +8455,27 @@ def init_compliance_center_tab():
             'sertifika_valid': []
         }
         
-        for record in records:
+        sozlesme_checked = 0
+        sertifika_checked = 0
+        sozlesme_parse_errors = 0
+        sertifika_parse_errors = 0
+        
+        for idx, record in enumerate(records):
             tedarikci = record.get('Tedarikçi Adı', '')
             mail = record.get('Mail', '')
             
+            # Debug: Show first record details
+            if idx == 0:
+                print(f"[ALARM DEBUG] İlk kayıt sütunları: {list(record.keys())}")
+                print(f"[ALARM DEBUG] İlk kayıt - Tedarikçi: {tedarikci}")
+            
             # Sözleşme kontrolü
             sozlesme_str = str(record.get('Sözleşme Bitiş Tarihi', '')).strip()
+            if idx == 0:
+                print(f"[ALARM DEBUG] İlk kayıt - Sözleşme değeri: '{sozlesme_str}'")
+            
             if sozlesme_str and sozlesme_str != '' and sozlesme_str != 'nan':
+                sozlesme_checked += 1
                 try:
                     sozlesme_date = datetime.strptime(sozlesme_str[:10], '%Y-%m-%d').date()
                     days_diff = (sozlesme_date - today).days
@@ -8483,12 +8500,18 @@ def init_compliance_center_tab():
                             'date': sozlesme_str,
                             'days': days_diff
                         })
-                except:
-                    pass
+                except Exception as e:
+                    sozlesme_parse_errors += 1
+                    if sozlesme_parse_errors <= 3:  # Log first 3 errors
+                        print(f"[ALARM DEBUG] Sözleşme parse hatası ({tedarikci}): {sozlesme_str} - {e}")
             
             # Sertifika kontrolü
             sertifika_str = str(record.get('Sertifika Bitiş Tarihi', '')).strip()
+            if idx == 0:
+                print(f"[ALARM DEBUG] İlk kayıt - Sertifika değeri: '{sertifika_str}'")
+            
             if sertifika_str and sertifika_str != '' and sertifika_str != 'nan':
+                sertifika_checked += 1
                 try:
                     sertifika_date = datetime.strptime(sertifika_str[:10], '%Y-%m-%d').date()
                     days_diff = (sertifika_date - today).days
@@ -8513,8 +8536,22 @@ def init_compliance_center_tab():
                             'date': sertifika_str,
                             'days': days_diff
                         })
-                except:
-                    pass
+                except Exception as e:
+                    sertifika_parse_errors += 1
+                    if sertifika_parse_errors <= 3:  # Log first 3 errors
+                        print(f"[ALARM DEBUG] Sertifika parse hatası ({tedarikci}): {sertifika_str} - {e}")
+        
+        # Summary logging
+        print(f"[ALARM DEBUG] İşlenen sözleşme sayısı: {sozlesme_checked}")
+        print(f"[ALARM DEBUG] İşlenen sertifika sayısı: {sertifika_checked}")
+        print(f"[ALARM DEBUG] Sözleşme parse hataları: {sozlesme_parse_errors}")
+        print(f"[ALARM DEBUG] Sertifika parse hataları: {sertifika_parse_errors}")
+        print(f"[ALARM DEBUG] Sonuç - Sözleşme süresi dolmuş: {len(results['sozlesme_expired'])}")
+        print(f"[ALARM DEBUG] Sonuç - Sözleşme yakında dolacak: {len(results['sozlesme_expiring'])}")
+        print(f"[ALARM DEBUG] Sonuç - Sözleşme geçerli: {len(results['sozlesme_valid'])}")
+        print(f"[ALARM DEBUG] Sonuç - Sertifika süresi dolmuş: {len(results['sertifika_expired'])}")
+        print(f"[ALARM DEBUG] Sonuç - Sertifika yakında dolacak: {len(results['sertifika_expiring'])}")
+        print(f"[ALARM DEBUG] Sonuç - Sertifika geçerli: {len(results['sertifika_valid'])}\n")
         
         return results
     
@@ -8571,6 +8608,22 @@ def init_compliance_center_tab():
         sertifika_expired_label.config(text=f"🔴 Süresi Dolmuş: {len(results['sertifika_expired'])}")
         sertifika_expiring_label.config(text=f"🟡 Yakında Dolacak (≤15 gün): {len(results['sertifika_expiring'])}")
         sertifika_valid_label.config(text=f"🟢 Geçerli: {len(results['sertifika_valid'])}")
+        
+        # Eğer tüm sayılar 0 ise kullanıcıya bilgi göster
+        total_count = (len(results['sozlesme_expired']) + len(results['sozlesme_expiring']) + 
+                      len(results['sozlesme_valid']) + len(results['sertifika_expired']) + 
+                      len(results['sertifika_expiring']) + len(results['sertifika_valid']))
+        
+        if total_count == 0:
+            print("\n" + "="*70)
+            print("⚠️  UYARI: Alarm sistemi veri bulamadı!")
+            print("="*70)
+            print("Tüm sayaçlar 0 gösteriyor. Olası nedenler:")
+            print("1. Excel dosyasında veri yok (sadece başlıklar var)")
+            print("2. 'Sözleşme Bitiş Tarihi' ve 'Sertifika Bitiş Tarihi' sütunları boş")
+            print("3. Tarih formatı yanlış (beklenen format: YYYY-MM-DD, örn: 2026-02-15)")
+            print("\nKonsol çıktısında [ALARM DEBUG] mesajlarına bakın.")
+            print("="*70 + "\n")
     
     def send_expiration_alerts():
         """Süresi dolmuş ve dolmak üzere olanlara mail gönder"""
