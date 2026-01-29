@@ -7582,6 +7582,20 @@ def load_cari_bilgiler():
         column_mapping = {
             'Tarih': 'Kayıt Tarihi'
         }
+        
+        # Kritik: Tarih sütunları için özel mapping
+        # Eğer 'Bitiş Tarihi' varsa ve 'Sözleşme Bitiş Tarihi' yoksa, map et
+        if 'Bitiş Tarihi' in df.columns and 'Sözleşme Bitiş Tarihi' not in df.columns:
+            # Önce 'Bitiş Tarihi'yi 'Sözleşme Bitiş Tarihi' olarak kopyala
+            df['Sözleşme Bitiş Tarihi'] = df['Bitiş Tarihi']
+            # Sertifika için de aynı tarihi kullan (kullanıcı ayırım yapmamış)
+            df['Sertifika Bitiş Tarihi'] = df['Bitiş Tarihi']
+            print("[MAPPING] 'Bitiş Tarihi' sütunu 'Sözleşme Bitiş Tarihi' ve 'Sertifika Bitiş Tarihi' olarak eşlendi")
+        
+        # Eğer 'Başlangıç Tarihi' varsa ve kullanılabilirse bilgi olarak göster
+        if 'Başlangıç Tarihi' in df.columns:
+            print("[INFO] 'Başlangıç Tarihi' sütunu mevcut (şu an kullanılmıyor)")
+        
         df.rename(columns=column_mapping, inplace=True)
         
         # NaN değerlerini boş string ile değiştir
