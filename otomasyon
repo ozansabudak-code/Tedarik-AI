@@ -8470,7 +8470,7 @@ def init_compliance_center_tab():
                             'date': sozlesme_str,
                             'days': abs(days_diff)
                         })
-                    elif days_diff <= 30:
+                    elif days_diff <= 15:
                         results['sozlesme_expiring'].append({
                             'tedarikci': tedarikci,
                             'mail': mail,
@@ -8500,7 +8500,7 @@ def init_compliance_center_tab():
                             'date': sertifika_str,
                             'days': abs(days_diff)
                         })
-                    elif days_diff <= 30:
+                    elif days_diff <= 15:
                         results['sertifika_expiring'].append({
                             'tedarikci': tedarikci,
                             'mail': mail,
@@ -8564,12 +8564,12 @@ def init_compliance_center_tab():
         
         # Sözleşme sayılarını güncelle
         sozlesme_expired_label.config(text=f"🔴 Süresi Dolmuş: {len(results['sozlesme_expired'])}")
-        sozlesme_expiring_label.config(text=f"🟡 Yakında Dolacak (30 gün): {len(results['sozlesme_expiring'])}")
+        sozlesme_expiring_label.config(text=f"🟡 Yakında Dolacak (≤15 gün): {len(results['sozlesme_expiring'])}")
         sozlesme_valid_label.config(text=f"🟢 Geçerli: {len(results['sozlesme_valid'])}")
         
         # Sertifika sayılarını güncelle
         sertifika_expired_label.config(text=f"🔴 Süresi Dolmuş: {len(results['sertifika_expired'])}")
-        sertifika_expiring_label.config(text=f"🟡 Yakında Dolacak (30 gün): {len(results['sertifika_expiring'])}")
+        sertifika_expiring_label.config(text=f"🟡 Yakında Dolacak (≤15 gün): {len(results['sertifika_expiring'])}")
         sertifika_valid_label.config(text=f"🟢 Geçerli: {len(results['sertifika_valid'])}")
     
     def send_expiration_alerts():
@@ -8730,6 +8730,151 @@ Tedarikçi Uyumluluk Merkezi"""
     
     # İlk yükleme
     update_alarm_display()
+    
+    # Yeni: Detaylı Sözleşme ve Sertifika Takip Tablosu
+    detail_table_section = tk.LabelFrame(cari_panel, text="📊 Sözleşme ve Sertifika Detaylı Takip Tablosu", 
+                                        font=("Segoe UI", 11, "bold"), bg="white", fg="#2980b9",
+                                        padx=10, pady=10, relief="solid", bd=1)
+    detail_table_section.pack(fill="both", expand=True, pady=(5, 0))
+    
+    detail_frame = tk.Frame(detail_table_section, bg="white")
+    detail_frame.pack(fill="both", expand=True)
+    
+    # Buton çubuğu
+    detail_btn_frame = tk.Frame(detail_frame, bg="white")
+    detail_btn_frame.pack(fill="x", pady=(0, 5))
+    
+    # Treeview container
+    detail_tree_container = tk.Frame(detail_frame, bg="white")
+    detail_tree_container.pack(fill="both", expand=True)
+    
+    # Scrollbar'lar
+    detail_scroll_y = ttk.Scrollbar(detail_tree_container, orient="vertical")
+    detail_scroll_y.pack(side="right", fill="y")
+    
+    detail_scroll_x = ttk.Scrollbar(detail_tree_container, orient="horizontal")
+    detail_scroll_x.pack(side="bottom", fill="x")
+    
+    # Treeview
+    detail_columns = ("Tedarikçi", "Tür", "Bitiş Tarihi", "Kalan Gün", "Durum")
+    detail_tree = ttk.Treeview(detail_tree_container, columns=detail_columns, show="headings", 
+                              yscrollcommand=detail_scroll_y.set, xscrollcommand=detail_scroll_x.set,
+                              height=12)
+    detail_tree.pack(fill="both", expand=True)
+    
+    detail_scroll_y.config(command=detail_tree.yview)
+    detail_scroll_x.config(command=detail_tree.xview)
+    
+    # Sütun ayarları
+    detail_tree.column("Tedarikçi", width=250, minwidth=150)
+    detail_tree.column("Tür", width=120, minwidth=100)
+    detail_tree.column("Bitiş Tarihi", width=120, minwidth=100)
+    detail_tree.column("Kalan Gün", width=100, minwidth=80)
+    detail_tree.column("Durum", width=150, minwidth=120)
+    
+    # Başlıklar
+    detail_tree.heading("Tedarikçi", text="Tedarikçi Adı")
+    detail_tree.heading("Tür", text="Belge Türü")
+    detail_tree.heading("Bitiş Tarihi", text="Bitiş Tarihi")
+    detail_tree.heading("Kalan Gün", text="Kalan Gün")
+    detail_tree.heading("Durum", text="Durum")
+    
+    # Tag'leri tanımla (color coding için)
+    detail_tree.tag_configure('expired', background='#ffcccc', foreground='#c0392b')  # Açık kırmızı
+    detail_tree.tag_configure('expiring', background='#fff3cd', foreground='#f39c12')  # Açık sarı
+    detail_tree.tag_configure('valid', background='#d4edda', foreground='#27ae60')  # Açık yeşil
+    
+    def refresh_detail_table():
+        """Detaylı tabloyu yenile"""
+        from datetime import datetime
+        
+        # Mevcut kayıtları temizle
+        for item in detail_tree.get_children():
+            detail_tree.delete(item)
+        
+        records = load_cari_bilgiler()
+        today = datetime.now().date()
+        
+        for record in records:
+            tedarikci = record.get('Tedarikçi Adı', '')
+            alim_turu = record.get('Alım Türü', '')
+            
+            # Fire Sales differentiation - Fire satış tedarikçileri için sertifika zorunluluğu
+            is_fire_sales = alim_turu == 'Fire'
+            
+            # Sözleşme bilgileri
+            sozlesme_str = str(record.get('Sözleşme Bitiş Tarihi', '')).strip()
+            if sozlesme_str and sozlesme_str != '' and sozlesme_str != 'nan':
+                try:
+                    sozlesme_date = datetime.strptime(sozlesme_str[:10], '%Y-%m-%d').date()
+                    days_diff = (sozlesme_date - today).days
+                    
+                    # Durum ve renk belirleme
+                    if days_diff < 0:
+                        status = f"🔴 Süresi Dolmuş ({abs(days_diff)} gün önce)"
+                        tag = 'expired'
+                    elif days_diff <= 15:
+                        status = f"🟡 Yakında Dolacak"
+                        tag = 'expiring'
+                    else:
+                        status = f"🟢 Geçerli"
+                        tag = 'valid'
+                    
+                    values = (tedarikci, "Sözleşme", sozlesme_str[:10], days_diff, status)
+                    detail_tree.insert("", "end", values=values, tags=(tag,))
+                except:
+                    pass
+            
+            # Sertifika bilgileri
+            sertifika_str = str(record.get('Sertifika Bitiş Tarihi', '')).strip()
+            if sertifika_str and sertifika_str != '' and sertifika_str != 'nan':
+                try:
+                    sertifika_date = datetime.strptime(sertifika_str[:10], '%Y-%m-%d').date()
+                    days_diff = (sertifika_date - today).days
+                    
+                    # Durum ve renk belirleme
+                    if days_diff < 0:
+                        status = f"🔴 Süresi Dolmuş ({abs(days_diff)} gün önce)"
+                        tag = 'expired'
+                    elif days_diff <= 15:
+                        status = f"🟡 Yakında Dolacak"
+                        tag = 'expiring'
+                    else:
+                        status = f"🟢 Geçerli"
+                        tag = 'valid'
+                    
+                    # Fire Sales tedarikçileri için sertifika özellikle vurgulanır
+                    tur = "Sertifika (Fire Sales)" if is_fire_sales else "Sertifika"
+                    values = (tedarikci, tur, sertifika_str[:10], days_diff, status)
+                    detail_tree.insert("", "end", values=values, tags=(tag,))
+                except:
+                    pass
+    
+    # Yenile butonu
+    tk.Button(detail_btn_frame, text="🔄 Tabloyu Yenile", font=("Segoe UI", 9, "bold"),
+             bg="#3498db", fg="white", cursor="hand2", padx=15, pady=5,
+             command=refresh_detail_table).pack(side="left", padx=5)
+    
+    # Açıklama etiketi
+    legend_label = tk.Label(detail_btn_frame, 
+                           text="Renk Kodları: 🔴 Kırmızı = Süresi Dolmuş | 🟡 Sarı = Yakında Dolacak (≤15 gün) | 🟢 Yeşil = Geçerli (>15 gün)", 
+                           font=("Segoe UI", 8), bg="white", fg="#7f8c8d")
+    legend_label.pack(side="left", padx=10)
+    
+    # İlk yükleme
+    refresh_detail_table()
+    
+    # Tüm göstergeleri güncelleyen birleşik fonksiyon
+    def update_all_displays():
+        """Hem alarm göstergelerini hem de detay tablosunu güncelle"""
+        update_alarm_display()
+        refresh_detail_table()
+    
+    # Alarm panelindeki güncelleme butonunu yeniden yapılandır
+    for widget in btn_frame.winfo_children():
+        if isinstance(widget, tk.Button) and "Durumu Güncelle" in widget.cget("text"):
+            widget.config(command=update_all_displays)
+            break
     
     # Alt kısım: Mail Gönderim Paneli
     mail_panel_section = tk.LabelFrame(cari_panel, text="📧 Mail Gönderim Paneli", 
