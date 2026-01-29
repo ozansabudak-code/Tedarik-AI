@@ -35,6 +35,9 @@ import logging # Loglama için
 import schedule # Zamanlanmış görevler için
 from collections import defaultdict # Activity tracking için
 from datetime import timedelta # Zaman hesaplamaları için
+import shutil # Backup işlemleri için
+import zipfile # Backup arşivleme için
+from pathlib import Path # Dosya yolu işlemleri için
 
 # Openpyxl kütüphanesi kontrolü (Excel yönetimi için)
 try:
@@ -100,6 +103,14 @@ try:
 except ImportError:
     GENAI_AVAILABLE = False
     print("Google Generative AI kütüphanesi bulunamadı. AI özellikleri çalışmayacak.")
+
+# Desktop notification kütüphanesi kontrolü
+try:
+    from plyer import notification
+    NOTIFICATION_AVAILABLE = True
+except ImportError:
+    NOTIFICATION_AVAILABLE = False
+    print("Plyer kütüphanesi bulunamadı. Masaüstü bildirimleri çalışmayacak.")
 
 # ---------- YAPILANDIRMA VE KİMLİK BİLGİLERİ ----------
 GEMINI_API_KEY = ""  # Kullanıcı tarafından güncellenecek
@@ -741,6 +752,212 @@ class ActivityLogger:
 
 # Global activity logger
 activity_logger = None
+
+# ---------- BACKUP VE GERİ YÜKLEME SİSTEMİ ----------
+def create_backup():
+    """
+    Tüm ayarları ve önemli verileri yedekler
+    """
+    try:
+        backup_dir = Path("backups")
+        backup_dir.mkdir(exist_ok=True)
+        
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_name = f"tedarik_ai_backup_{timestamp}.zip"
+        backup_path = backup_dir / backup_name
+        
+        # Yedeklenecek dosyalar
+        files_to_backup = []
+        
+        # Ayar dosyası
+        if os.path.exists(SETTINGS_FILE):
+            files_to_backup.append(SETTINGS_FILE)
+        
+        # Activity log dosyası
+        if os.path.exists("activity_log.json"):
+            files_to_backup.append("activity_log.json")
+        
+        # Zip arşivi oluştur
+        with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for file in files_to_backup:
+                if os.path.exists(file):
+                    zipf.write(file, arcname=os.path.basename(file))
+            
+            # Metadata ekle
+            metadata = {
+                "backup_date": datetime.datetime.now().isoformat(),
+                "version": "1.0",
+                "files": [os.path.basename(f) for f in files_to_backup]
+            }
+            zipf.writestr("backup_info.json", json.dumps(metadata, indent=2))
+        
+        # Eski yedekleri temizle (30 günden eski)
+        cleanup_old_backups(backup_dir, days=30)
+        
+        messagebox.showinfo("Yedekleme Başarılı", 
+                          f"✅ Yedek oluşturuldu!\n\nDosya: {backup_name}\n\nKonum: {backup_dir}")
+        
+        if activity_logger:
+            activity_logger.log_event("BACKUP_CREATED", f"Yedek dosyası: {backup_name}")
+        
+        return True
+        
+    except Exception as e:
+        messagebox.showerror("Yedekleme Hatası", f"Yedek oluşturulamadı:\n{str(e)}")
+        if activity_logger:
+            activity_logger.log_error(f"Yedekleme hatası: {str(e)}")
+        return False
+
+def restore_backup():
+    """
+    Yedek dosyasından ayarları geri yükler
+    """
+    try:
+        backup_file = filedialog.askopenfilename(
+            title="Yedek Dosyası Seç",
+            filetypes=[("Zip Dosyaları", "*.zip"), ("Tüm Dosyalar", "*.*")],
+            initialdir="backups" if os.path.exists("backups") else "."
+        )
+        
+        if not backup_file:
+            return False
+        
+        # Onay al
+        result = messagebox.askyesno("Geri Yükleme Onayı",
+                                     "Mevcut ayarlar yedek dosya ile değiştirilecek.\n\n"
+                                     "Devam etmek istiyor musunuz?")
+        if not result:
+            return False
+        
+        # Zip dosyasını aç
+        with zipfile.ZipFile(backup_file, 'r') as zipf:
+            # Metadata'yı oku
+            try:
+                metadata_content = zipf.read("backup_info.json")
+                metadata = json.loads(metadata_content)
+                backup_date = metadata.get("backup_date", "Bilinmiyor")
+            except:
+                backup_date = "Bilinmiyor"
+            
+            # Tüm dosyaları çıkar
+            zipf.extractall(".")
+        
+        messagebox.showinfo("Geri Yükleme Başarılı",
+                          f"✅ Yedek geri yüklendi!\n\nYedek tarihi: {backup_date}\n\n"
+                          f"Program yeniden başlatılmalı.")
+        
+        if activity_logger:
+            activity_logger.log_event("BACKUP_RESTORED", f"Yedek dosyası: {os.path.basename(backup_file)}")
+        
+        return True
+        
+    except Exception as e:
+        messagebox.showerror("Geri Yükleme Hatası", f"Yedek geri yüklenemedi:\n{str(e)}")
+        if activity_logger:
+            activity_logger.log_error(f"Geri yükleme hatası: {str(e)}")
+        return False
+
+def cleanup_old_backups(backup_dir, days=30):
+    """
+    Eski yedekleri temizler
+    """
+    try:
+        cutoff_time = datetime.datetime.now() - datetime.timedelta(days=days)
+        
+        for backup_file in backup_dir.glob("tedarik_ai_backup_*.zip"):
+            file_time = datetime.datetime.fromtimestamp(backup_file.stat().st_mtime)
+            if file_time < cutoff_time:
+                backup_file.unlink()
+                print(f"Eski yedek silindi: {backup_file.name}")
+    except Exception as e:
+        print(f"Yedek temizleme hatası: {str(e)}")
+
+def auto_backup_schedule():
+    """
+    Otomatik yedekleme planla
+    """
+    # Her gün saat 18:00'de otomatik yedek al
+    schedule.every().day.at("18:00").do(create_backup)
+    print("Otomatik yedekleme planlandı: Her gün 18:00")
+
+# ---------- MASAÜSTÜ BİLDİRİM SİSTEMİ ----------
+def show_desktop_notification(title, message, timeout=10):
+    """
+    Masaüstü bildirimi gösterir
+    """
+    if not NOTIFICATION_AVAILABLE:
+        print(f"[Bildirim] {title}: {message}")
+        return
+    
+    try:
+        notification.notify(
+            title=title,
+            message=message,
+            app_name="Tedarik AI",
+            timeout=timeout
+        )
+    except Exception as e:
+        print(f"Bildirim hatası: {str(e)}")
+
+def notify_expiring_contracts(days_threshold=15):
+    """
+    Süresi dolmak üzere olan sözleşmeler için bildirim gönderir
+    """
+    try:
+        records = load_cari_bilgiler()
+        expiring_count = 0
+        
+        for record in records:
+            sozlesme_str = str(record.get('Sözleşme Bitiş Tarihi', '')).strip()
+            if sozlesme_str and sozlesme_str not in ['', 'nan', 'None', 'NaT']:
+                try:
+                    sozlesme_date = pd.to_datetime(sozlesme_str).date()
+                    days_left = (sozlesme_date - datetime.date.today()).days
+                    
+                    if 0 < days_left <= days_threshold:
+                        expiring_count += 1
+                except:
+                    pass
+        
+        if expiring_count > 0:
+            show_desktop_notification(
+                "⚠️ Sözleşme Uyarısı",
+                f"{expiring_count} adet sözleşme {days_threshold} gün içinde dolacak!"
+            )
+            
+            if activity_logger:
+                activity_logger.log_event("CONTRACT_WARNING", 
+                                        f"{expiring_count} sözleşme yakında dolacak")
+    except Exception as e:
+        print(f"Sözleşme bildirimi hatası: {str(e)}")
+
+def notify_critical_alerts():
+    """
+    Kritik alarmlar için masaüstü bildirimi
+    """
+    try:
+        records = load_cari_bilgiler()
+        expired_count = 0
+        
+        for record in records:
+            sozlesme_str = str(record.get('Sözleşme Bitiş Tarihi', '')).strip()
+            if sozlesme_str and sozlesme_str not in ['', 'nan', 'None', 'NaT']:
+                try:
+                    sozlesme_date = pd.to_datetime(sozlesme_str).date()
+                    days_left = (sozlesme_date - datetime.date.today()).days
+                    
+                    if days_left < 0:
+                        expired_count += 1
+                except:
+                    pass
+        
+        if expired_count > 0:
+            show_desktop_notification(
+                "🔴 Kritik Uyarı!",
+                f"{expired_count} adet sözleşme süresi dolmuş!"
+            )
+    except Exception as e:
+        print(f"Kritik alarm bildirimi hatası: {str(e)}")
 
 # ---------- MYSQL BAĞLANTI FONKSİYONLARI ----------
 def create_mysql_connection():
@@ -9995,6 +10212,20 @@ for text, name in menu_items:
     btn.pack(fill="x", pady=2, padx=5)
     menu_buttons[name] = btn
 
+# Sistem Araçları Bölümü
+ctk.CTkLabel(sidebar_content_frame, text="─────────", font=("Arial", 8), text_color="#95a5a6").pack(pady=5)
+ctk.CTkLabel(sidebar_content_frame, text="SİSTEM ARAÇLARI", font=("Segoe UI", 9, "bold"), text_color="#95a5a6").pack(pady=2)
+
+system_tools_frame = ctk.CTkFrame(sidebar_content_frame, fg_color="transparent")
+system_tools_frame.pack(fill="x", pady=5, padx=5)
+
+ttk.Button(system_tools_frame, text="💾 Yedek Al", 
+          command=create_backup).pack(fill="x", pady=2)
+ttk.Button(system_tools_frame, text="📥 Yedek Yükle", 
+          command=restore_backup).pack(fill="x", pady=2)
+ttk.Button(system_tools_frame, text="🔔 Bildirimleri Test Et", 
+          command=lambda: show_desktop_notification("Test Bildirimi", "Sistem çalışıyor! ✅")).pack(fill="x", pady=2)
+
 ctk.CTkLabel(sidebar_content_frame, text="v2.8 | DeFacto", font=("Arial", 8), text_color="#95a5a6").pack(side="bottom", pady=10)
 
 status_label = ttk.Label(content_area, text="Hazır", relief="sunken", anchor="w")
@@ -10465,11 +10696,23 @@ if __name__ == "__main__":
     # Periyodik raporlar (her 4 saatte bir)
     schedule.every(4).hours.do(activity_logger.send_daily_report_email)
     
+    # Otomatik yedekleme planla (Her gün saat 18:00)
+    auto_backup_schedule()
+    
+    # Sözleşme bildirimleri (Her gün saat 09:00)
+    schedule.every().day.at("09:00").do(notify_expiring_contracts)
+    
+    # Kritik alarmlar (Her 4 saatte bir)
+    schedule.every(4).hours.do(notify_critical_alerts)
+    
     # Scheduler thread'i başlat
     scheduler_thread = threading.Thread(target=scheduled_report_sender, daemon=True)
     scheduler_thread.start()
     
     activity_logger.log_event("APP_START", "Uygulama başlatıldı")
+    
+    # Başlangıç bildirimi
+    show_desktop_notification("Tedarik AI", "Sistem başlatıldı ✅")
     
     load_settings()
     
@@ -10486,6 +10729,9 @@ if __name__ == "__main__":
     
     # Merkezi dosyaları otomatik yükle - mainloop başladıktan sonra
     root.after(100, load_daily_files)
+    
+    # İlk bildirimleri kontrol et (5 saniye sonra)
+    root.after(5000, notify_expiring_contracts)
     
     try:
         root.mainloop()
