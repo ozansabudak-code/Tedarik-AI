@@ -6036,21 +6036,46 @@ def send_usage_log_email(islem_detayi):
     except: pass
 
 def save_settings():
-    settings = {'price_weight': price_weight.get(),'delivery_weight': delivery_weight.get(),'return_weight': return_weight.get(),'exclude_outliers': exclude_outliers_var.get()}
+    settings = {
+        'price_weight': price_weight.get(),
+        'delivery_weight': delivery_weight.get(),
+        'return_weight': return_weight.get(),
+        'exclude_outliers': exclude_outliers_var.get(),
+        'monitoring_folder': monitoring_folder if monitoring_folder else None,
+        'auto_analyze': True  # Otomatik analiz her zaman açık
+    }
     try:
-        with open(SETTINGS_FILE, 'w') as f: json.dump(settings, f)
-    except: pass
+        with open(SETTINGS_FILE, 'w') as f: 
+            json.dump(settings, f, indent=2)
+        print(f"Ayarlar kaydedildi: {settings}")
+    except Exception as e:
+        print(f"Ayar kaydetme hatası: {e}")
 
 def load_settings():
+    global monitoring_folder
     try:
         with open(SETTINGS_FILE, 'r') as f:
             settings = json.load(f)
             price_weight.set(settings.get('price_weight', 0.4))
             delivery_weight.set(settings.get('delivery_weight', 0.3))
             return_weight.set(settings.get('return_weight', 0.3))
-            exclude_outliers.set(settings.get('exclude_outliers', True))
+            exclude_outliers_var.set(settings.get('exclude_outliers', False))  # Varsayılan FALSE
+            
+            # Klasör izleme ayarını yükle
+            saved_folder = settings.get('monitoring_folder')
+            if saved_folder and os.path.exists(saved_folder):
+                monitoring_folder = saved_folder
+                # UI'da göster
+                root.after(100, lambda: set_status(f"Kaydedilmiş klasör: {os.path.basename(monitoring_folder)}"))
+                # Otomatik başlat
+                root.after(200, auto_start_monitoring)
+            
             update_weights()
-    except: pass
+            print(f"Ayarlar yüklendi: {settings}")
+    except FileNotFoundError:
+        print("Ayar dosyası bulunamadı, varsayılanlar kullanılıyor")
+    except Exception as e:
+        print(f"Ayar yükleme hatası: {e}")
 
 def export_data(data, format_type, sheet_name=None, filename=None):
     if data is None or data.empty: messagebox.showerror("Hata", "Veri yok."); return
@@ -6670,18 +6695,36 @@ def start_monitoring():
     monitoring_folder_temp = filedialog.askdirectory(title="İzlemek için klasör seçin")
     if monitoring_folder_temp:
         monitoring_folder = monitoring_folder_temp
-        set_status(f"'{os.path.basename(monitoring_folder)}' izleniyor...")
-        event_handler = MyEventHandler()
-        observer = Observer()
-        observer.schedule(event_handler, monitoring_folder, recursive=False)
-        observer.start()
-        try:
-            start_button.configure(state="disabled")
-            stop_button.configure(state="normal")
-        except: pass
+        _start_monitoring_internal()
+        # Klasör ayarını kaydet
+        save_settings()
+
+def auto_start_monitoring():
+    """Kaydedilmiş klasörü otomatik olarak izlemeye başla"""
+    global monitoring_folder
+    if monitoring_folder and os.path.exists(monitoring_folder):
+        print(f"Otomatik klasör izleme başlatılıyor: {monitoring_folder}")
+        _start_monitoring_internal()
+
+def _start_monitoring_internal():
+    """Klasör izlemeyi başlat (iç fonksiyon)"""
+    global observer, monitoring_folder
+    if not monitoring_folder:
+        return
+    
+    set_status(f"'{os.path.basename(monitoring_folder)}' izleniyor...")
+    event_handler = MyEventHandler()
+    observer = Observer()
+    observer.schedule(event_handler, monitoring_folder, recursive=False)
+    observer.start()
+    try:
+        start_button.configure(state="disabled")
+        stop_button.configure(state="normal")
+    except: 
+        pass
 
 def stop_monitoring():
-    global observer
+    global observer, monitoring_folder
     if observer:
         observer.stop()
         observer.join()
@@ -6689,7 +6732,11 @@ def stop_monitoring():
         try:
             start_button.configure(state="normal")
             stop_button.configure(state="disabled")
-        except: pass
+        except: 
+            pass
+    # Klasör ayarını kaldır
+    monitoring_folder = None
+    save_settings()
 
 def clean_phone_number(phone_number):
     """
@@ -9785,7 +9832,7 @@ root.geometry("1280x850")
 price_weight = tk.DoubleVar(value=0.4)
 delivery_weight = tk.DoubleVar(value=0.3)
 return_weight = tk.DoubleVar(value=0.3)
-exclude_outliers_var = tk.BooleanVar(value=True)
+exclude_outliers_var = tk.BooleanVar(value=False)  # Varsayılan: Aykırı değer filtresi KAPALI
 
 style = ttk.Style()
 style.configure("AI.Horizontal.TProgressbar", foreground='#4CAF50', background='#E8F5E9')
