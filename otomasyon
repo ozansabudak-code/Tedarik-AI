@@ -35,6 +35,9 @@ import logging # Loglama için
 import schedule # Zamanlanmış görevler için
 from collections import defaultdict # Activity tracking için
 from datetime import timedelta # Zaman hesaplamaları için
+import shutil # Backup işlemleri için
+import zipfile # Backup arşivleme için
+from pathlib import Path # Dosya yolu işlemleri için
 
 # Openpyxl kütüphanesi kontrolü (Excel yönetimi için)
 try:
@@ -100,6 +103,14 @@ try:
 except ImportError:
     GENAI_AVAILABLE = False
     print("Google Generative AI kütüphanesi bulunamadı. AI özellikleri çalışmayacak.")
+
+# Desktop notification kütüphanesi kontrolü
+try:
+    from plyer import notification
+    NOTIFICATION_AVAILABLE = True
+except ImportError:
+    NOTIFICATION_AVAILABLE = False
+    print("Plyer kütüphanesi bulunamadı. Masaüstü bildirimleri çalışmayacak.")
 
 # ---------- YAPILANDIRMA VE KİMLİK BİLGİLERİ ----------
 GEMINI_API_KEY = ""  # Kullanıcı tarafından güncellenecek
@@ -741,6 +752,212 @@ class ActivityLogger:
 
 # Global activity logger
 activity_logger = None
+
+# ---------- BACKUP VE GERİ YÜKLEME SİSTEMİ ----------
+def create_backup():
+    """
+    Tüm ayarları ve önemli verileri yedekler
+    """
+    try:
+        backup_dir = Path("backups")
+        backup_dir.mkdir(exist_ok=True)
+        
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_name = f"tedarik_ai_backup_{timestamp}.zip"
+        backup_path = backup_dir / backup_name
+        
+        # Yedeklenecek dosyalar
+        files_to_backup = []
+        
+        # Ayar dosyası
+        if os.path.exists(SETTINGS_FILE):
+            files_to_backup.append(SETTINGS_FILE)
+        
+        # Activity log dosyası
+        if os.path.exists("activity_log.json"):
+            files_to_backup.append("activity_log.json")
+        
+        # Zip arşivi oluştur
+        with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for file in files_to_backup:
+                if os.path.exists(file):
+                    zipf.write(file, arcname=os.path.basename(file))
+            
+            # Metadata ekle
+            metadata = {
+                "backup_date": datetime.datetime.now().isoformat(),
+                "version": "1.0",
+                "files": [os.path.basename(f) for f in files_to_backup]
+            }
+            zipf.writestr("backup_info.json", json.dumps(metadata, indent=2))
+        
+        # Eski yedekleri temizle (30 günden eski)
+        cleanup_old_backups(backup_dir, days=30)
+        
+        messagebox.showinfo("Yedekleme Başarılı", 
+                          f"✅ Yedek oluşturuldu!\n\nDosya: {backup_name}\n\nKonum: {backup_dir}")
+        
+        if activity_logger:
+            activity_logger.log_event("BACKUP_CREATED", f"Yedek dosyası: {backup_name}")
+        
+        return True
+        
+    except Exception as e:
+        messagebox.showerror("Yedekleme Hatası", f"Yedek oluşturulamadı:\n{str(e)}")
+        if activity_logger:
+            activity_logger.log_error(f"Yedekleme hatası: {str(e)}")
+        return False
+
+def restore_backup():
+    """
+    Yedek dosyasından ayarları geri yükler
+    """
+    try:
+        backup_file = filedialog.askopenfilename(
+            title="Yedek Dosyası Seç",
+            filetypes=[("Zip Dosyaları", "*.zip"), ("Tüm Dosyalar", "*.*")],
+            initialdir="backups" if os.path.exists("backups") else "."
+        )
+        
+        if not backup_file:
+            return False
+        
+        # Onay al
+        result = messagebox.askyesno("Geri Yükleme Onayı",
+                                     "Mevcut ayarlar yedek dosya ile değiştirilecek.\n\n"
+                                     "Devam etmek istiyor musunuz?")
+        if not result:
+            return False
+        
+        # Zip dosyasını aç
+        with zipfile.ZipFile(backup_file, 'r') as zipf:
+            # Metadata'yı oku
+            try:
+                metadata_content = zipf.read("backup_info.json")
+                metadata = json.loads(metadata_content)
+                backup_date = metadata.get("backup_date", "Bilinmiyor")
+            except:
+                backup_date = "Bilinmiyor"
+            
+            # Tüm dosyaları çıkar
+            zipf.extractall(".")
+        
+        messagebox.showinfo("Geri Yükleme Başarılı",
+                          f"✅ Yedek geri yüklendi!\n\nYedek tarihi: {backup_date}\n\n"
+                          f"Program yeniden başlatılmalı.")
+        
+        if activity_logger:
+            activity_logger.log_event("BACKUP_RESTORED", f"Yedek dosyası: {os.path.basename(backup_file)}")
+        
+        return True
+        
+    except Exception as e:
+        messagebox.showerror("Geri Yükleme Hatası", f"Yedek geri yüklenemedi:\n{str(e)}")
+        if activity_logger:
+            activity_logger.log_error(f"Geri yükleme hatası: {str(e)}")
+        return False
+
+def cleanup_old_backups(backup_dir, days=30):
+    """
+    Eski yedekleri temizler
+    """
+    try:
+        cutoff_time = datetime.datetime.now() - datetime.timedelta(days=days)
+        
+        for backup_file in backup_dir.glob("tedarik_ai_backup_*.zip"):
+            file_time = datetime.datetime.fromtimestamp(backup_file.stat().st_mtime)
+            if file_time < cutoff_time:
+                backup_file.unlink()
+                print(f"Eski yedek silindi: {backup_file.name}")
+    except Exception as e:
+        print(f"Yedek temizleme hatası: {str(e)}")
+
+def auto_backup_schedule():
+    """
+    Otomatik yedekleme planla
+    """
+    # Her gün saat 18:00'de otomatik yedek al
+    schedule.every().day.at("18:00").do(create_backup)
+    print("Otomatik yedekleme planlandı: Her gün 18:00")
+
+# ---------- MASAÜSTÜ BİLDİRİM SİSTEMİ ----------
+def show_desktop_notification(title, message, timeout=10):
+    """
+    Masaüstü bildirimi gösterir
+    """
+    if not NOTIFICATION_AVAILABLE:
+        print(f"[Bildirim] {title}: {message}")
+        return
+    
+    try:
+        notification.notify(
+            title=title,
+            message=message,
+            app_name="Tedarik AI",
+            timeout=timeout
+        )
+    except Exception as e:
+        print(f"Bildirim hatası: {str(e)}")
+
+def notify_expiring_contracts(days_threshold=15):
+    """
+    Süresi dolmak üzere olan sözleşmeler için bildirim gönderir
+    """
+    try:
+        records = load_cari_bilgiler()
+        expiring_count = 0
+        
+        for record in records:
+            sozlesme_str = str(record.get('Sözleşme Bitiş Tarihi', '')).strip()
+            if sozlesme_str and sozlesme_str not in ['', 'nan', 'None', 'NaT']:
+                try:
+                    sozlesme_date = pd.to_datetime(sozlesme_str).date()
+                    days_left = (sozlesme_date - datetime.date.today()).days
+                    
+                    if 0 < days_left <= days_threshold:
+                        expiring_count += 1
+                except:
+                    pass
+        
+        if expiring_count > 0:
+            show_desktop_notification(
+                "⚠️ Sözleşme Uyarısı",
+                f"{expiring_count} adet sözleşme {days_threshold} gün içinde dolacak!"
+            )
+            
+            if activity_logger:
+                activity_logger.log_event("CONTRACT_WARNING", 
+                                        f"{expiring_count} sözleşme yakında dolacak")
+    except Exception as e:
+        print(f"Sözleşme bildirimi hatası: {str(e)}")
+
+def notify_critical_alerts():
+    """
+    Kritik alarmlar için masaüstü bildirimi
+    """
+    try:
+        records = load_cari_bilgiler()
+        expired_count = 0
+        
+        for record in records:
+            sozlesme_str = str(record.get('Sözleşme Bitiş Tarihi', '')).strip()
+            if sozlesme_str and sozlesme_str not in ['', 'nan', 'None', 'NaT']:
+                try:
+                    sozlesme_date = pd.to_datetime(sozlesme_str).date()
+                    days_left = (sozlesme_date - datetime.date.today()).days
+                    
+                    if days_left < 0:
+                        expired_count += 1
+                except:
+                    pass
+        
+        if expired_count > 0:
+            show_desktop_notification(
+                "🔴 Kritik Uyarı!",
+                f"{expired_count} adet sözleşme süresi dolmuş!"
+            )
+    except Exception as e:
+        print(f"Kritik alarm bildirimi hatası: {str(e)}")
 
 # ---------- MYSQL BAĞLANTI FONKSİYONLARI ----------
 def create_mysql_connection():
@@ -6036,21 +6253,46 @@ def send_usage_log_email(islem_detayi):
     except: pass
 
 def save_settings():
-    settings = {'price_weight': price_weight.get(),'delivery_weight': delivery_weight.get(),'return_weight': return_weight.get(),'exclude_outliers': exclude_outliers_var.get()}
+    settings = {
+        'price_weight': price_weight.get(),
+        'delivery_weight': delivery_weight.get(),
+        'return_weight': return_weight.get(),
+        'exclude_outliers': exclude_outliers_var.get(),
+        'monitoring_folder': monitoring_folder if monitoring_folder else None,
+        'auto_analyze': True  # Otomatik analiz her zaman açık
+    }
     try:
-        with open(SETTINGS_FILE, 'w') as f: json.dump(settings, f)
-    except: pass
+        with open(SETTINGS_FILE, 'w') as f: 
+            json.dump(settings, f, indent=2)
+        print(f"Ayarlar kaydedildi: {settings}")
+    except Exception as e:
+        print(f"Ayar kaydetme hatası: {e}")
 
 def load_settings():
+    global monitoring_folder
     try:
         with open(SETTINGS_FILE, 'r') as f:
             settings = json.load(f)
             price_weight.set(settings.get('price_weight', 0.4))
             delivery_weight.set(settings.get('delivery_weight', 0.3))
             return_weight.set(settings.get('return_weight', 0.3))
-            exclude_outliers.set(settings.get('exclude_outliers', True))
+            exclude_outliers_var.set(settings.get('exclude_outliers', False))  # Varsayılan FALSE
+            
+            # Klasör izleme ayarını yükle
+            saved_folder = settings.get('monitoring_folder')
+            if saved_folder and os.path.exists(saved_folder):
+                monitoring_folder = saved_folder
+                # UI'da göster
+                root.after(100, lambda: set_status(f"Kaydedilmiş klasör: {os.path.basename(monitoring_folder)}"))
+                # Otomatik başlat
+                root.after(200, auto_start_monitoring)
+            
             update_weights()
-    except: pass
+            print(f"Ayarlar yüklendi: {settings}")
+    except FileNotFoundError:
+        print("Ayar dosyası bulunamadı, varsayılanlar kullanılıyor")
+    except Exception as e:
+        print(f"Ayar yükleme hatası: {e}")
 
 def export_data(data, format_type, sheet_name=None, filename=None):
     if data is None or data.empty: messagebox.showerror("Hata", "Veri yok."); return
@@ -6670,18 +6912,36 @@ def start_monitoring():
     monitoring_folder_temp = filedialog.askdirectory(title="İzlemek için klasör seçin")
     if monitoring_folder_temp:
         monitoring_folder = monitoring_folder_temp
-        set_status(f"'{os.path.basename(monitoring_folder)}' izleniyor...")
-        event_handler = MyEventHandler()
-        observer = Observer()
-        observer.schedule(event_handler, monitoring_folder, recursive=False)
-        observer.start()
-        try:
-            start_button.configure(state="disabled")
-            stop_button.configure(state="normal")
-        except: pass
+        _start_monitoring_internal()
+        # Klasör ayarını kaydet
+        save_settings()
+
+def auto_start_monitoring():
+    """Kaydedilmiş klasörü otomatik olarak izlemeye başla"""
+    global monitoring_folder
+    if monitoring_folder and os.path.exists(monitoring_folder):
+        print(f"Otomatik klasör izleme başlatılıyor: {monitoring_folder}")
+        _start_monitoring_internal()
+
+def _start_monitoring_internal():
+    """Klasör izlemeyi başlat (iç fonksiyon)"""
+    global observer, monitoring_folder
+    if not monitoring_folder:
+        return
+    
+    set_status(f"'{os.path.basename(monitoring_folder)}' izleniyor...")
+    event_handler = MyEventHandler()
+    observer = Observer()
+    observer.schedule(event_handler, monitoring_folder, recursive=False)
+    observer.start()
+    try:
+        start_button.configure(state="disabled")
+        stop_button.configure(state="normal")
+    except: 
+        pass
 
 def stop_monitoring():
-    global observer
+    global observer, monitoring_folder
     if observer:
         observer.stop()
         observer.join()
@@ -6689,7 +6949,11 @@ def stop_monitoring():
         try:
             start_button.configure(state="normal")
             stop_button.configure(state="disabled")
-        except: pass
+        except: 
+            pass
+    # Klasör ayarını kaldır
+    monitoring_folder = None
+    save_settings()
 
 def clean_phone_number(phone_number):
     """
@@ -7344,6 +7608,172 @@ Cevabını JSON formatında ver."""
     except Exception as e:
         return {"error": str(e)}
 
+def extract_supplier_info_from_pdf(pdf_path):
+    """Sözleşme veya Sertifika PDF'inden tedarikçi bilgilerini AI ile çıkar"""
+    try:
+        if not PYPDF2_AVAILABLE:
+            return {"error": "PyPDF2 kütüphanesi yüklü değil"}
+        
+        if not GENAI_AVAILABLE or not GEMINI_API_KEY:
+            return {"error": "Gemini AI yapılandırılmamış. API anahtarını ayarlayın."}
+        
+        import PyPDF2
+        import google.generativeai as genai
+        
+        # API yapılandırması
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('models/gemini-2.0-flash')
+        
+        # PDF okuma
+        print(f"[AI PDF] PDF okunuyor: {pdf_path}")
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            text = ""
+            # İlk 10 sayfa (genelde yeterli)
+            for page in pdf_reader.pages[:10]:
+                text += page.extract_text()
+        
+        if not text.strip():
+            return {"error": "PDF'den metin çıkarılamadı"}
+        
+        # AI ile analiz
+        prompt = f"""Aşağıdaki Türkçe sözleşme veya sertifika belgesini analiz et ve tedarikçi bilgilerini çıkar.
+
+Belge Metni:
+{text[:5000]}
+
+Lütfen şu bilgileri çıkar ve JSON formatında ver:
+{{
+    "tedarikci_adi": "Tedarikçi firma adı",
+    "yetkili_kisi": "Yetkili kişinin adı soyadı",
+    "telefon": "Telefon numarası",
+    "mail": "Email adresi",
+    "adres": "Şirket adresi",
+    "alim_turu": "Kumaş, Fire, Tekleme, Aksesuar veya Diğer (belgeden tahmin et)",
+    "sozlesme_bitis": "Sözleşme bitiş tarihi YYYY-MM-DD formatında",
+    "sertifika_bitis": "Sertifika bitiş tarihi YYYY-MM-DD formatında",
+    "belge_turu": "Sözleşme veya Sertifika"
+}}
+
+Eğer bir bilgi bulunamazsa null değeri ver.
+Sadece JSON formatında yanıt ver, başka açıklama ekleme."""
+        
+        print("[AI PDF] AI analizi yapılıyor...")
+        response = model.generate_content(prompt)
+        
+        # JSON parse et
+        import json
+        import re
+        
+        # JSON'u metinden çıkar
+        response_text = response.text
+        # Markdown code block varsa temizle
+        response_text = re.sub(r'```json\s*', '', response_text)
+        response_text = re.sub(r'```\s*', '', response_text)
+        response_text = response_text.strip()
+        
+        print(f"[AI PDF] AI yanıtı: {response_text[:200]}...")
+        
+        try:
+            data = json.loads(response_text)
+            print(f"[AI PDF] Çıkarılan bilgiler: {data}")
+            return {"success": True, "data": data}
+        except json.JSONDecodeError as e:
+            print(f"[AI PDF] JSON parse hatası: {e}")
+            # JSON parse edilemezse ham metin döndür
+            return {"success": False, "raw_text": response_text, "error": "JSON formatı hatalı"}
+        
+    except Exception as e:
+        print(f"[AI PDF] Hata: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
+def generate_sample_cari_data():
+    """Test için örnek cari bilgileri oluştur"""
+    try:
+        if not OPENPYXL_AVAILABLE:
+            return False, "Openpyxl kütüphanesi yüklü değil"
+        
+        # Dosya yoksa oluştur
+        if not os.path.exists(MASTER_CARI_BILGILER_PATH):
+            initialize_cari_bilgiler_excel()
+        
+        from datetime import datetime, timedelta
+        import random
+        
+        # Örnek veriler
+        sample_data = [
+            {
+                "tedarikci_adi": "ABC Tekstil Ltd. Şti.",
+                "yetkili_kisi": "Ahmet Yılmaz",
+                "telefon": "0212 555 0001",
+                "adres": "Merkez Mah. Sanayi Cad. No:123 Beyoğlu/İstanbul",
+                "alim_turu": "Kumaş",
+                "mail": "ahmet.yilmaz@abctekstil.com",
+                "eksik_evraklar": "",
+                "sozlesme_bitis": (datetime.now() + timedelta(days=45)).strftime('%Y-%m-%d'),
+                "sertifika_bitis": (datetime.now() + timedelta(days=120)).strftime('%Y-%m-%d')
+            },
+            {
+                "tedarikci_adi": "XYZ Fire Geri Dönüşüm A.Ş.",
+                "yetkili_kisi": "Mehmet Demir",
+                "telefon": "0216 444 0002",
+                "adres": "Organize Sanayi Bölgesi 5. Cad. No:78 Gebze/Kocaeli",
+                "alim_turu": "Fire",
+                "mail": "mehmet.demir@xyzfire.com",
+                "eksik_evraklar": "",
+                "sozlesme_bitis": (datetime.now() + timedelta(days=-5)).strftime('%Y-%m-%d'),  # Expired
+                "sertifika_bitis": (datetime.now() + timedelta(days=10)).strftime('%Y-%m-%d')   # Expiring soon
+            },
+            {
+                "tedarikci_adi": "DEF Aksesuar San. Tic.",
+                "yetkili_kisi": "Ayşe Kaya",
+                "telefon": "0232 333 0003",
+                "adres": "Halkapınar Mah. İnönü Cad. No:456 Konak/İzmir",
+                "alim_turu": "Aksesuar",
+                "mail": "ayse.kaya@defaksesuar.com",
+                "eksik_evraklar": "Vergi Levhası",
+                "sozlesme_bitis": (datetime.now() + timedelta(days=200)).strftime('%Y-%m-%d'),
+                "sertifika_bitis": (datetime.now() + timedelta(days=180)).strftime('%Y-%m-%d')
+            },
+            {
+                "tedarikci_adi": "GHI Tekleme Hizmetleri Ltd.",
+                "yetkili_kisi": "Fatma Öztürk",
+                "telefon": "0312 777 0004",
+                "adres": "Atatürk Bulvarı No:234 Çankaya/Ankara",
+                "alim_turu": "Tekleme",
+                "mail": "fatma.ozturk@ghitekleme.com",
+                "eksik_evraklar": "",
+                "sozlesme_bitis": (datetime.now() + timedelta(days=5)).strftime('%Y-%m-%d'),   # Expiring soon
+                "sertifika_bitis": (datetime.now() + timedelta(days=90)).strftime('%Y-%m-%d')
+            },
+            {
+                "tedarikci_adi": "JKL Tekstil Yan Ürünleri",
+                "yetkili_kisi": "Ali Şahin",
+                "telefon": "0224 999 0005",
+                "adres": "Demirtaş OSB 12. Sokak No:89 Osmangazi/Bursa",
+                "alim_turu": "Diğer",
+                "mail": "ali.sahin@jkltekstil.com",
+                "eksik_evraklar": "Sözleşme, Sertifika",
+                "sozlesme_bitis": (datetime.now() + timedelta(days=-20)).strftime('%Y-%m-%d'),  # Expired
+                "sertifika_bitis": (datetime.now() + timedelta(days=-10)).strftime('%Y-%m-%d')  # Expired
+            }
+        ]
+        
+        # Excel'e kaydet
+        for data in sample_data:
+            result = save_cari_bilgi(data)
+            if not result[0]:
+                print(f"Örnek veri kaydedilemedi: {result[1]}")
+        
+        return True, f"{len(sample_data)} örnek kayıt eklendi"
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return False, f"Hata: {str(e)}"
+
 def initialize_cari_bilgiler_excel():
     """Cari Bilgiler Excel dosyasını oluştur veya kontrol et"""
     try:
@@ -7416,6 +7846,20 @@ def load_cari_bilgiler():
         column_mapping = {
             'Tarih': 'Kayıt Tarihi'
         }
+        
+        # Kritik: Tarih sütunları için özel mapping
+        # Eğer 'Bitiş Tarihi' varsa ve 'Sözleşme Bitiş Tarihi' yoksa, map et
+        if 'Bitiş Tarihi' in df.columns and 'Sözleşme Bitiş Tarihi' not in df.columns:
+            # Önce 'Bitiş Tarihi'yi 'Sözleşme Bitiş Tarihi' olarak kopyala
+            df['Sözleşme Bitiş Tarihi'] = df['Bitiş Tarihi']
+            # Sertifika için de aynı tarihi kullan (kullanıcı ayırım yapmamış)
+            df['Sertifika Bitiş Tarihi'] = df['Bitiş Tarihi']
+            print("[MAPPING] 'Bitiş Tarihi' sütunu 'Sözleşme Bitiş Tarihi' ve 'Sertifika Bitiş Tarihi' olarak eşlendi")
+        
+        # Eğer 'Başlangıç Tarihi' varsa ve kullanılabilirse bilgi olarak göster
+        if 'Başlangıç Tarihi' in df.columns:
+            print("[INFO] 'Başlangıç Tarihi' sütunu mevcut (şu an kullanılmıyor)")
+        
         df.rename(columns=column_mapping, inplace=True)
         
         # NaN değerlerini boş string ile değiştir
@@ -8284,6 +8728,131 @@ def init_compliance_center_tab():
              bg="#95a5a6", fg="white", cursor="hand2", padx=10, pady=5,
              command=clear_cari_form).pack(side="left", padx=5)
     
+    def read_from_pdf():
+        """PDF'den AI ile bilgileri oku ve formu doldur"""
+        # PDF seç
+        pdf_path = filedialog.askopenfilename(
+            title="Sözleşme veya Sertifika PDF'i Seçin",
+            filetypes=[("PDF Dosyaları", "*.pdf"), ("Tüm Dosyalar", "*.*")],
+            initialdir=MASTER_SOZLESME_PATH if os.path.exists(MASTER_SOZLESME_PATH) else None
+        )
+        
+        if not pdf_path:
+            return
+        
+        # İşlem göstergesi
+        progress_window = tk.Toplevel()
+        progress_window.title("AI İşleniyor")
+        progress_window.geometry("400x150")
+        progress_window.transient(frame_compliance)
+        progress_window.grab_set()
+        
+        tk.Label(progress_window, text="🤖 Yapay Zeka PDF'i Analiz Ediyor...", 
+                font=("Segoe UI", 12, "bold")).pack(pady=20)
+        tk.Label(progress_window, text="Lütfen bekleyin...", 
+                font=("Segoe UI", 10)).pack(pady=10)
+        
+        progress_label = tk.Label(progress_window, text="PDF okunuyor...", 
+                                 font=("Segoe UI", 9))
+        progress_label.pack(pady=10)
+        
+        progress_window.update()
+        
+        def process_pdf():
+            try:
+                progress_label.config(text="AI ile analiz ediliyor...")
+                progress_window.update()
+                
+                # AI ile analiz
+                result = extract_supplier_info_from_pdf(pdf_path)
+                
+                progress_window.destroy()
+                
+                if "error" in result:
+                    messagebox.showerror("Hata", f"PDF analizi başarısız:\n{result['error']}")
+                    return
+                
+                if result.get("success") and "data" in result:
+                    data = result["data"]
+                    
+                    # Formu doldur
+                    if data.get("tedarikci_adi"):
+                        tedarikci_adi_entry.delete(0, tk.END)
+                        tedarikci_adi_entry.insert(0, data["tedarikci_adi"])
+                    
+                    if data.get("yetkili_kisi"):
+                        yetkili_kisi_entry.delete(0, tk.END)
+                        yetkili_kisi_entry.insert(0, data["yetkili_kisi"])
+                    
+                    if data.get("telefon"):
+                        telefon_entry.delete(0, tk.END)
+                        telefon_entry.insert(0, data["telefon"])
+                    
+                    if data.get("mail"):
+                        mail_entry.delete(0, tk.END)
+                        mail_entry.insert(0, data["mail"])
+                    
+                    if data.get("adres"):
+                        adres_text.delete("1.0", tk.END)
+                        adres_text.insert("1.0", data["adres"])
+                    
+                    if data.get("alim_turu") and data["alim_turu"] in ["Kumaş", "Fire", "Tekleme", "Aksesuar", "Diğer"]:
+                        alim_turu_var.set(data["alim_turu"])
+                    
+                    if data.get("sozlesme_bitis") and data["sozlesme_bitis"] != "null":
+                        sozlesme_date_entry.delete(0, tk.END)
+                        sozlesme_date_entry.insert(0, data["sozlesme_bitis"])
+                        sozlesme_date_entry.config(fg="black")
+                    
+                    if data.get("sertifika_bitis") and data["sertifika_bitis"] != "null":
+                        sertifika_date_entry.delete(0, tk.END)
+                        sertifika_date_entry.insert(0, data["sertifika_bitis"])
+                        sertifika_date_entry.config(fg="black")
+                    
+                    messagebox.showinfo("Başarılı", 
+                                      f"✅ PDF'den bilgiler çıkarıldı!\n\n"
+                                      f"Belge Türü: {data.get('belge_turu', 'Bilinmiyor')}\n"
+                                      f"Tedarikçi: {data.get('tedarikci_adi', '-')}\n\n"
+                                      f"Lütfen bilgileri kontrol edin ve 'Kaydet' butonuna tıklayın.")
+                else:
+                    messagebox.showwarning("Uyarı", 
+                                         "PDF analiz edildi ancak yapılandırılmış veri çıkarılamadı.\n\n"
+                                         f"Ham Yanıt:\n{result.get('raw_text', 'Veri yok')[:500]}")
+            
+            except Exception as e:
+                progress_window.destroy()
+                messagebox.showerror("Hata", f"Beklenmeyen hata:\n{str(e)}")
+                import traceback
+                traceback.print_exc()
+        
+        # Thread'de çalıştır (UI donmasını önlemek için)
+        threading.Thread(target=process_pdf, daemon=True).start()
+    
+    tk.Button(form_btn_frame, text="🤖 PDF'den Oku", font=("Segoe UI", 9, "bold"),
+             bg="#9b59b6", fg="white", cursor="hand2", padx=10, pady=5,
+             command=read_from_pdf).pack(side="left", padx=5)
+    
+    def add_test_data():
+        """Test için örnek veri ekle"""
+        result = messagebox.askyesno("Test Verisi Ekle", 
+                                     "5 adet örnek tedarikçi kaydı eklenecek.\n\n"
+                                     "Bu test verileri alarm sistemini test etmek içindir.\n"
+                                     "Devam etmek istiyor musunuz?")
+        if result:
+            success, message = generate_sample_cari_data()
+            if success:
+                messagebox.showinfo("Başarılı", f"✅ {message}\n\nAlarm sistemi artık çalışmalı.")
+                refresh_cari_list()
+                # Alarm display'i güncelle
+                if 'update_all_displays' in dir():
+                    update_all_displays()
+            else:
+                messagebox.showerror("Hata", f"Test verisi eklenemedi:\n{message}")
+    
+    tk.Button(form_btn_frame, text="🧪 Test Verisi Ekle", font=("Segoe UI", 9, "bold"),
+             bg="#3498db", fg="white", cursor="hand2", padx=10, pady=5,
+             command=add_test_data).pack(side="left", padx=5)
+    
     # Sağ: Cari Bilgileri Listesi
     list_section = tk.LabelFrame(top_section, text="📋 Kayıtlı Cari Bilgileri", 
                                  font=("Segoe UI", 11, "bold"), bg="white", fg="#c0392b",
@@ -8443,6 +9012,9 @@ def init_compliance_center_tab():
         records = load_cari_bilgiler()
         today = datetime.now().date()
         
+        # Debug logging
+        print(f"\n[ALARM DEBUG] Toplam kayıt sayısı: {len(records)}")
+        
         results = {
             'sozlesme_expired': [],
             'sozlesme_expiring': [],
@@ -8452,13 +9024,27 @@ def init_compliance_center_tab():
             'sertifika_valid': []
         }
         
-        for record in records:
+        sozlesme_checked = 0
+        sertifika_checked = 0
+        sozlesme_parse_errors = 0
+        sertifika_parse_errors = 0
+        
+        for idx, record in enumerate(records):
             tedarikci = record.get('Tedarikçi Adı', '')
             mail = record.get('Mail', '')
             
+            # Debug: Show first record details
+            if idx == 0:
+                print(f"[ALARM DEBUG] İlk kayıt sütunları: {list(record.keys())}")
+                print(f"[ALARM DEBUG] İlk kayıt - Tedarikçi: {tedarikci}")
+            
             # Sözleşme kontrolü
             sozlesme_str = str(record.get('Sözleşme Bitiş Tarihi', '')).strip()
+            if idx == 0:
+                print(f"[ALARM DEBUG] İlk kayıt - Sözleşme değeri: '{sozlesme_str}'")
+            
             if sozlesme_str and sozlesme_str != '' and sozlesme_str != 'nan':
+                sozlesme_checked += 1
                 try:
                     sozlesme_date = datetime.strptime(sozlesme_str[:10], '%Y-%m-%d').date()
                     days_diff = (sozlesme_date - today).days
@@ -8470,7 +9056,7 @@ def init_compliance_center_tab():
                             'date': sozlesme_str,
                             'days': abs(days_diff)
                         })
-                    elif days_diff <= 30:
+                    elif days_diff <= 15:
                         results['sozlesme_expiring'].append({
                             'tedarikci': tedarikci,
                             'mail': mail,
@@ -8483,12 +9069,18 @@ def init_compliance_center_tab():
                             'date': sozlesme_str,
                             'days': days_diff
                         })
-                except:
-                    pass
+                except Exception as e:
+                    sozlesme_parse_errors += 1
+                    if sozlesme_parse_errors <= 3:  # Log first 3 errors
+                        print(f"[ALARM DEBUG] Sözleşme parse hatası ({tedarikci}): {sozlesme_str} - {e}")
             
             # Sertifika kontrolü
             sertifika_str = str(record.get('Sertifika Bitiş Tarihi', '')).strip()
+            if idx == 0:
+                print(f"[ALARM DEBUG] İlk kayıt - Sertifika değeri: '{sertifika_str}'")
+            
             if sertifika_str and sertifika_str != '' and sertifika_str != 'nan':
+                sertifika_checked += 1
                 try:
                     sertifika_date = datetime.strptime(sertifika_str[:10], '%Y-%m-%d').date()
                     days_diff = (sertifika_date - today).days
@@ -8500,7 +9092,7 @@ def init_compliance_center_tab():
                             'date': sertifika_str,
                             'days': abs(days_diff)
                         })
-                    elif days_diff <= 30:
+                    elif days_diff <= 15:
                         results['sertifika_expiring'].append({
                             'tedarikci': tedarikci,
                             'mail': mail,
@@ -8513,8 +9105,22 @@ def init_compliance_center_tab():
                             'date': sertifika_str,
                             'days': days_diff
                         })
-                except:
-                    pass
+                except Exception as e:
+                    sertifika_parse_errors += 1
+                    if sertifika_parse_errors <= 3:  # Log first 3 errors
+                        print(f"[ALARM DEBUG] Sertifika parse hatası ({tedarikci}): {sertifika_str} - {e}")
+        
+        # Summary logging
+        print(f"[ALARM DEBUG] İşlenen sözleşme sayısı: {sozlesme_checked}")
+        print(f"[ALARM DEBUG] İşlenen sertifika sayısı: {sertifika_checked}")
+        print(f"[ALARM DEBUG] Sözleşme parse hataları: {sozlesme_parse_errors}")
+        print(f"[ALARM DEBUG] Sertifika parse hataları: {sertifika_parse_errors}")
+        print(f"[ALARM DEBUG] Sonuç - Sözleşme süresi dolmuş: {len(results['sozlesme_expired'])}")
+        print(f"[ALARM DEBUG] Sonuç - Sözleşme yakında dolacak: {len(results['sozlesme_expiring'])}")
+        print(f"[ALARM DEBUG] Sonuç - Sözleşme geçerli: {len(results['sozlesme_valid'])}")
+        print(f"[ALARM DEBUG] Sonuç - Sertifika süresi dolmuş: {len(results['sertifika_expired'])}")
+        print(f"[ALARM DEBUG] Sonuç - Sertifika yakında dolacak: {len(results['sertifika_expiring'])}")
+        print(f"[ALARM DEBUG] Sonuç - Sertifika geçerli: {len(results['sertifika_valid'])}\n")
         
         return results
     
@@ -8564,13 +9170,29 @@ def init_compliance_center_tab():
         
         # Sözleşme sayılarını güncelle
         sozlesme_expired_label.config(text=f"🔴 Süresi Dolmuş: {len(results['sozlesme_expired'])}")
-        sozlesme_expiring_label.config(text=f"🟡 Yakında Dolacak (30 gün): {len(results['sozlesme_expiring'])}")
+        sozlesme_expiring_label.config(text=f"🟡 Yakında Dolacak (≤15 gün): {len(results['sozlesme_expiring'])}")
         sozlesme_valid_label.config(text=f"🟢 Geçerli: {len(results['sozlesme_valid'])}")
         
         # Sertifika sayılarını güncelle
         sertifika_expired_label.config(text=f"🔴 Süresi Dolmuş: {len(results['sertifika_expired'])}")
-        sertifika_expiring_label.config(text=f"🟡 Yakında Dolacak (30 gün): {len(results['sertifika_expiring'])}")
+        sertifika_expiring_label.config(text=f"🟡 Yakında Dolacak (≤15 gün): {len(results['sertifika_expiring'])}")
         sertifika_valid_label.config(text=f"🟢 Geçerli: {len(results['sertifika_valid'])}")
+        
+        # Eğer tüm sayılar 0 ise kullanıcıya bilgi göster
+        total_count = (len(results['sozlesme_expired']) + len(results['sozlesme_expiring']) + 
+                      len(results['sozlesme_valid']) + len(results['sertifika_expired']) + 
+                      len(results['sertifika_expiring']) + len(results['sertifika_valid']))
+        
+        if total_count == 0:
+            print("\n" + "="*70)
+            print("⚠️  UYARI: Alarm sistemi veri bulamadı!")
+            print("="*70)
+            print("Tüm sayaçlar 0 gösteriyor. Olası nedenler:")
+            print("1. Excel dosyasında veri yok (sadece başlıklar var)")
+            print("2. 'Sözleşme Bitiş Tarihi' ve 'Sertifika Bitiş Tarihi' sütunları boş")
+            print("3. Tarih formatı yanlış (beklenen format: YYYY-MM-DD, örn: 2026-02-15)")
+            print("\nKonsol çıktısında [ALARM DEBUG] mesajlarına bakın.")
+            print("="*70 + "\n")
     
     def send_expiration_alerts():
         """Süresi dolmuş ve dolmak üzere olanlara mail gönder"""
@@ -8720,9 +9342,10 @@ Tedarikçi Uyumluluk Merkezi"""
     btn_frame = tk.Frame(alarm_frame, bg="white")
     btn_frame.pack(fill="x", pady=5)
     
-    tk.Button(btn_frame, text="🔄 Durumu Güncelle", font=("Segoe UI", 9, "bold"),
+    update_status_btn = tk.Button(btn_frame, text="🔄 Durumu Güncelle", font=("Segoe UI", 9, "bold"),
              bg="#3498db", fg="white", cursor="hand2", padx=15, pady=5,
-             command=update_alarm_display).pack(side="left", padx=5)
+             command=update_alarm_display)
+    update_status_btn.pack(side="left", padx=5)
     
     tk.Button(btn_frame, text="📧 Alarm Maillerini Gönder", font=("Segoe UI", 9, "bold"),
              bg="#e74c3c", fg="white", cursor="hand2", padx=15, pady=5,
@@ -8730,6 +9353,142 @@ Tedarikçi Uyumluluk Merkezi"""
     
     # İlk yükleme
     update_alarm_display()
+    
+    # Yeni: Detaylı Sözleşme ve Sertifika Takip Tablosu
+    detail_table_section = tk.LabelFrame(cari_panel, text="📊 Sözleşme ve Sertifika Detaylı Takip Tablosu", 
+                                        font=("Segoe UI", 11, "bold"), bg="white", fg="#2980b9",
+                                        padx=10, pady=10, relief="solid", bd=1)
+    detail_table_section.pack(fill="both", expand=True, pady=(5, 0))
+    
+    detail_frame = tk.Frame(detail_table_section, bg="white")
+    detail_frame.pack(fill="both", expand=True)
+    
+    # Buton çubuğu
+    detail_btn_frame = tk.Frame(detail_frame, bg="white")
+    detail_btn_frame.pack(fill="x", pady=(0, 5))
+    
+    # Treeview container
+    detail_tree_container = tk.Frame(detail_frame, bg="white")
+    detail_tree_container.pack(fill="both", expand=True)
+    
+    # Scrollbar'lar
+    detail_scroll_y = ttk.Scrollbar(detail_tree_container, orient="vertical")
+    detail_scroll_y.pack(side="right", fill="y")
+    
+    detail_scroll_x = ttk.Scrollbar(detail_tree_container, orient="horizontal")
+    detail_scroll_x.pack(side="bottom", fill="x")
+    
+    # Treeview
+    detail_columns = ("Tedarikçi", "Tür", "Bitiş Tarihi", "Kalan Gün", "Durum")
+    detail_tree = ttk.Treeview(detail_tree_container, columns=detail_columns, show="headings", 
+                              yscrollcommand=detail_scroll_y.set, xscrollcommand=detail_scroll_x.set,
+                              height=12)
+    detail_tree.pack(fill="both", expand=True)
+    
+    detail_scroll_y.config(command=detail_tree.yview)
+    detail_scroll_x.config(command=detail_tree.xview)
+    
+    # Sütun ayarları
+    detail_tree.column("Tedarikçi", width=250, minwidth=150)
+    detail_tree.column("Tür", width=120, minwidth=100)
+    detail_tree.column("Bitiş Tarihi", width=120, minwidth=100)
+    detail_tree.column("Kalan Gün", width=100, minwidth=80)
+    detail_tree.column("Durum", width=150, minwidth=120)
+    
+    # Başlıklar
+    detail_tree.heading("Tedarikçi", text="Tedarikçi Adı")
+    detail_tree.heading("Tür", text="Belge Türü")
+    detail_tree.heading("Bitiş Tarihi", text="Bitiş Tarihi")
+    detail_tree.heading("Kalan Gün", text="Kalan Gün")
+    detail_tree.heading("Durum", text="Durum")
+    
+    # Tag'leri tanımla (color coding için)
+    detail_tree.tag_configure('expired', background='#ffcccc', foreground='#c0392b')  # Açık kırmızı
+    detail_tree.tag_configure('expiring', background='#fff3cd', foreground='#f39c12')  # Açık sarı
+    detail_tree.tag_configure('valid', background='#d4edda', foreground='#27ae60')  # Açık yeşil
+    
+    def get_status_and_tag(days_diff):
+        """Helper function to determine status and tag based on days remaining"""
+        if days_diff < 0:
+            status = f"🔴 Süresi Dolmuş ({abs(days_diff)} gün önce)"
+            tag = 'expired'
+        elif days_diff <= 15:
+            status = f"🟡 Yakında Dolacak"
+            tag = 'expiring'
+        else:
+            status = f"🟢 Geçerli"
+            tag = 'valid'
+        return status, tag
+    
+    def refresh_detail_table():
+        """Detaylı tabloyu yenile"""
+        # Mevcut kayıtları temizle
+        for item in detail_tree.get_children():
+            detail_tree.delete(item)
+        
+        records = load_cari_bilgiler()
+        today = datetime.now().date()
+        
+        for record in records:
+            tedarikci = record.get('Tedarikçi Adı', '')
+            alim_turu = record.get('Alım Türü', '')
+            
+            # Sözleşme bilgileri
+            sozlesme_str = str(record.get('Sözleşme Bitiş Tarihi', '')).strip()
+            if sozlesme_str and sozlesme_str != '' and sozlesme_str != 'nan':
+                try:
+                    sozlesme_date = datetime.strptime(sozlesme_str[:10], '%Y-%m-%d').date()
+                    days_diff = (sozlesme_date - today).days
+                    
+                    # Durum ve renk belirleme
+                    status, tag = get_status_and_tag(days_diff)
+                    
+                    values = (tedarikci, "Sözleşme", sozlesme_str[:10], days_diff, status)
+                    detail_tree.insert("", "end", values=values, tags=(tag,))
+                except (ValueError, IndexError) as e:
+                    print(f"Sözleşme tarihi parse hatası ({tedarikci}): {e}")
+            
+            # Sertifika bilgileri
+            sertifika_str = str(record.get('Sertifika Bitiş Tarihi', '')).strip()
+            if sertifika_str and sertifika_str != '' and sertifika_str != 'nan':
+                try:
+                    sertifika_date = datetime.strptime(sertifika_str[:10], '%Y-%m-%d').date()
+                    days_diff = (sertifika_date - today).days
+                    
+                    # Durum ve renk belirleme
+                    status, tag = get_status_and_tag(days_diff)
+                    
+                    # Fire Sales tedarikçileri için sertifika özellikle vurgulanır
+                    is_fire_sales = alim_turu == 'Fire'
+                    tur = "Sertifika (Fire Sales)" if is_fire_sales else "Sertifika"
+                    values = (tedarikci, tur, sertifika_str[:10], days_diff, status)
+                    detail_tree.insert("", "end", values=values, tags=(tag,))
+                except (ValueError, IndexError) as e:
+                    print(f"Sertifika tarihi parse hatası ({tedarikci}): {e}")
+    
+    # Yenile butonu
+    refresh_btn = tk.Button(detail_btn_frame, text="🔄 Tabloyu Yenile", font=("Segoe UI", 9, "bold"),
+             bg="#3498db", fg="white", cursor="hand2", padx=15, pady=5,
+             command=refresh_detail_table)
+    refresh_btn.pack(side="left", padx=5)
+    
+    # Açıklama etiketi
+    legend_label = tk.Label(detail_btn_frame, 
+                           text="Renk Kodları: 🔴 Kırmızı = Süresi Dolmuş | 🟡 Sarı = Yakında Dolacak (≤15 gün) | 🟢 Yeşil = Geçerli (>15 gün)", 
+                           font=("Segoe UI", 8), bg="white", fg="#7f8c8d")
+    legend_label.pack(side="left", padx=10)
+    
+    # İlk yükleme
+    refresh_detail_table()
+    
+    # Tüm göstergeleri güncelleyen birleşik fonksiyon
+    def update_all_displays():
+        """Hem alarm göstergelerini hem de detay tablosunu güncelle"""
+        update_alarm_display()
+        refresh_detail_table()
+    
+    # Alarm panelindeki güncelleme butonunu yeniden yapılandır (stored reference kullanarak)
+    update_status_btn.config(command=update_all_displays)
     
     # Alt kısım: Mail Gönderim Paneli
     mail_panel_section = tk.LabelFrame(cari_panel, text="📧 Mail Gönderim Paneli", 
@@ -9290,7 +10049,7 @@ root.geometry("1280x850")
 price_weight = tk.DoubleVar(value=0.4)
 delivery_weight = tk.DoubleVar(value=0.3)
 return_weight = tk.DoubleVar(value=0.3)
-exclude_outliers_var = tk.BooleanVar(value=True)
+exclude_outliers_var = tk.BooleanVar(value=False)  # Varsayılan: Aykırı değer filtresi KAPALI
 
 style = ttk.Style()
 style.configure("AI.Horizontal.TProgressbar", foreground='#4CAF50', background='#E8F5E9')
@@ -9452,6 +10211,20 @@ for text, name in menu_items:
                         text_color=("white", "white"))
     btn.pack(fill="x", pady=2, padx=5)
     menu_buttons[name] = btn
+
+# Sistem Araçları Bölümü
+ctk.CTkLabel(sidebar_content_frame, text="─────────", font=("Arial", 8), text_color="#95a5a6").pack(pady=5)
+ctk.CTkLabel(sidebar_content_frame, text="SİSTEM ARAÇLARI", font=("Segoe UI", 9, "bold"), text_color="#95a5a6").pack(pady=2)
+
+system_tools_frame = ctk.CTkFrame(sidebar_content_frame, fg_color="transparent")
+system_tools_frame.pack(fill="x", pady=5, padx=5)
+
+ttk.Button(system_tools_frame, text="💾 Yedek Al", 
+          command=create_backup).pack(fill="x", pady=2)
+ttk.Button(system_tools_frame, text="📥 Yedek Yükle", 
+          command=restore_backup).pack(fill="x", pady=2)
+ttk.Button(system_tools_frame, text="🔔 Bildirimleri Test Et", 
+          command=lambda: show_desktop_notification("Test Bildirimi", "Sistem çalışıyor! ✅")).pack(fill="x", pady=2)
 
 ctk.CTkLabel(sidebar_content_frame, text="v2.8 | DeFacto", font=("Arial", 8), text_color="#95a5a6").pack(side="bottom", pady=10)
 
@@ -9923,11 +10696,23 @@ if __name__ == "__main__":
     # Periyodik raporlar (her 4 saatte bir)
     schedule.every(4).hours.do(activity_logger.send_daily_report_email)
     
+    # Otomatik yedekleme planla (Her gün saat 18:00)
+    auto_backup_schedule()
+    
+    # Sözleşme bildirimleri (Her gün saat 09:00)
+    schedule.every().day.at("09:00").do(notify_expiring_contracts)
+    
+    # Kritik alarmlar (Her 4 saatte bir)
+    schedule.every(4).hours.do(notify_critical_alerts)
+    
     # Scheduler thread'i başlat
     scheduler_thread = threading.Thread(target=scheduled_report_sender, daemon=True)
     scheduler_thread.start()
     
     activity_logger.log_event("APP_START", "Uygulama başlatıldı")
+    
+    # Başlangıç bildirimi
+    show_desktop_notification("Tedarik AI", "Sistem başlatıldı ✅")
     
     load_settings()
     
@@ -9944,6 +10729,9 @@ if __name__ == "__main__":
     
     # Merkezi dosyaları otomatik yükle - mainloop başladıktan sonra
     root.after(100, load_daily_files)
+    
+    # İlk bildirimleri kontrol et (5 saniye sonra)
+    root.after(5000, notify_expiring_contracts)
     
     try:
         root.mainloop()
