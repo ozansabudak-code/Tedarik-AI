@@ -7344,6 +7344,172 @@ Cevabını JSON formatında ver."""
     except Exception as e:
         return {"error": str(e)}
 
+def extract_supplier_info_from_pdf(pdf_path):
+    """Sözleşme veya Sertifika PDF'inden tedarikçi bilgilerini AI ile çıkar"""
+    try:
+        if not PYPDF2_AVAILABLE:
+            return {"error": "PyPDF2 kütüphanesi yüklü değil"}
+        
+        if not GENAI_AVAILABLE or not GEMINI_API_KEY:
+            return {"error": "Gemini AI yapılandırılmamış. API anahtarını ayarlayın."}
+        
+        import PyPDF2
+        import google.generativeai as genai
+        
+        # API yapılandırması
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('models/gemini-2.0-flash')
+        
+        # PDF okuma
+        print(f"[AI PDF] PDF okunuyor: {pdf_path}")
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            text = ""
+            # İlk 10 sayfa (genelde yeterli)
+            for page in pdf_reader.pages[:10]:
+                text += page.extract_text()
+        
+        if not text.strip():
+            return {"error": "PDF'den metin çıkarılamadı"}
+        
+        # AI ile analiz
+        prompt = f"""Aşağıdaki Türkçe sözleşme veya sertifika belgesini analiz et ve tedarikçi bilgilerini çıkar.
+
+Belge Metni:
+{text[:5000]}
+
+Lütfen şu bilgileri çıkar ve JSON formatında ver:
+{{
+    "tedarikci_adi": "Tedarikçi firma adı",
+    "yetkili_kisi": "Yetkili kişinin adı soyadı",
+    "telefon": "Telefon numarası",
+    "mail": "Email adresi",
+    "adres": "Şirket adresi",
+    "alim_turu": "Kumaş, Fire, Tekleme, Aksesuar veya Diğer (belgeden tahmin et)",
+    "sozlesme_bitis": "Sözleşme bitiş tarihi YYYY-MM-DD formatında",
+    "sertifika_bitis": "Sertifika bitiş tarihi YYYY-MM-DD formatında",
+    "belge_turu": "Sözleşme veya Sertifika"
+}}
+
+Eğer bir bilgi bulunamazsa null değeri ver.
+Sadece JSON formatında yanıt ver, başka açıklama ekleme."""
+        
+        print("[AI PDF] AI analizi yapılıyor...")
+        response = model.generate_content(prompt)
+        
+        # JSON parse et
+        import json
+        import re
+        
+        # JSON'u metinden çıkar
+        response_text = response.text
+        # Markdown code block varsa temizle
+        response_text = re.sub(r'```json\s*', '', response_text)
+        response_text = re.sub(r'```\s*', '', response_text)
+        response_text = response_text.strip()
+        
+        print(f"[AI PDF] AI yanıtı: {response_text[:200]}...")
+        
+        try:
+            data = json.loads(response_text)
+            print(f"[AI PDF] Çıkarılan bilgiler: {data}")
+            return {"success": True, "data": data}
+        except json.JSONDecodeError as e:
+            print(f"[AI PDF] JSON parse hatası: {e}")
+            # JSON parse edilemezse ham metin döndür
+            return {"success": False, "raw_text": response_text, "error": "JSON formatı hatalı"}
+        
+    except Exception as e:
+        print(f"[AI PDF] Hata: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
+def generate_sample_cari_data():
+    """Test için örnek cari bilgileri oluştur"""
+    try:
+        if not OPENPYXL_AVAILABLE:
+            return False, "Openpyxl kütüphanesi yüklü değil"
+        
+        # Dosya yoksa oluştur
+        if not os.path.exists(MASTER_CARI_BILGILER_PATH):
+            initialize_cari_bilgiler_excel()
+        
+        from datetime import datetime, timedelta
+        import random
+        
+        # Örnek veriler
+        sample_data = [
+            {
+                "tedarikci_adi": "ABC Tekstil Ltd. Şti.",
+                "yetkili_kisi": "Ahmet Yılmaz",
+                "telefon": "0212 555 0001",
+                "adres": "Merkez Mah. Sanayi Cad. No:123 Beyoğlu/İstanbul",
+                "alim_turu": "Kumaş",
+                "mail": "ahmet.yilmaz@abctekstil.com",
+                "eksik_evraklar": "",
+                "sozlesme_bitis": (datetime.now() + timedelta(days=45)).strftime('%Y-%m-%d'),
+                "sertifika_bitis": (datetime.now() + timedelta(days=120)).strftime('%Y-%m-%d')
+            },
+            {
+                "tedarikci_adi": "XYZ Fire Geri Dönüşüm A.Ş.",
+                "yetkili_kisi": "Mehmet Demir",
+                "telefon": "0216 444 0002",
+                "adres": "Organize Sanayi Bölgesi 5. Cad. No:78 Gebze/Kocaeli",
+                "alim_turu": "Fire",
+                "mail": "mehmet.demir@xyzfire.com",
+                "eksik_evraklar": "",
+                "sozlesme_bitis": (datetime.now() + timedelta(days=-5)).strftime('%Y-%m-%d'),  # Expired
+                "sertifika_bitis": (datetime.now() + timedelta(days=10)).strftime('%Y-%m-%d')   # Expiring soon
+            },
+            {
+                "tedarikci_adi": "DEF Aksesuar San. Tic.",
+                "yetkili_kisi": "Ayşe Kaya",
+                "telefon": "0232 333 0003",
+                "adres": "Halkapınar Mah. İnönü Cad. No:456 Konak/İzmir",
+                "alim_turu": "Aksesuar",
+                "mail": "ayse.kaya@defaksesuar.com",
+                "eksik_evraklar": "Vergi Levhası",
+                "sozlesme_bitis": (datetime.now() + timedelta(days=200)).strftime('%Y-%m-%d'),
+                "sertifika_bitis": (datetime.now() + timedelta(days=180)).strftime('%Y-%m-%d')
+            },
+            {
+                "tedarikci_adi": "GHI Tekleme Hizmetleri Ltd.",
+                "yetkili_kisi": "Fatma Öztürk",
+                "telefon": "0312 777 0004",
+                "adres": "Atatürk Bulvarı No:234 Çankaya/Ankara",
+                "alim_turu": "Tekleme",
+                "mail": "fatma.ozturk@ghitekleme.com",
+                "eksik_evraklar": "",
+                "sozlesme_bitis": (datetime.now() + timedelta(days=5)).strftime('%Y-%m-%d'),   # Expiring soon
+                "sertifika_bitis": (datetime.now() + timedelta(days=90)).strftime('%Y-%m-%d')
+            },
+            {
+                "tedarikci_adi": "JKL Tekstil Yan Ürünleri",
+                "yetkili_kisi": "Ali Şahin",
+                "telefon": "0224 999 0005",
+                "adres": "Demirtaş OSB 12. Sokak No:89 Osmangazi/Bursa",
+                "alim_turu": "Diğer",
+                "mail": "ali.sahin@jkltekstil.com",
+                "eksik_evraklar": "Sözleşme, Sertifika",
+                "sozlesme_bitis": (datetime.now() + timedelta(days=-20)).strftime('%Y-%m-%d'),  # Expired
+                "sertifika_bitis": (datetime.now() + timedelta(days=-10)).strftime('%Y-%m-%d')  # Expired
+            }
+        ]
+        
+        # Excel'e kaydet
+        for data in sample_data:
+            result = save_cari_bilgi(data)
+            if not result[0]:
+                print(f"Örnek veri kaydedilemedi: {result[1]}")
+        
+        return True, f"{len(sample_data)} örnek kayıt eklendi"
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return False, f"Hata: {str(e)}"
+
 def initialize_cari_bilgiler_excel():
     """Cari Bilgiler Excel dosyasını oluştur veya kontrol et"""
     try:
@@ -8283,6 +8449,131 @@ def init_compliance_center_tab():
     tk.Button(form_btn_frame, text="🔄 Temizle", font=("Segoe UI", 9, "bold"),
              bg="#95a5a6", fg="white", cursor="hand2", padx=10, pady=5,
              command=clear_cari_form).pack(side="left", padx=5)
+    
+    def read_from_pdf():
+        """PDF'den AI ile bilgileri oku ve formu doldur"""
+        # PDF seç
+        pdf_path = filedialog.askopenfilename(
+            title="Sözleşme veya Sertifika PDF'i Seçin",
+            filetypes=[("PDF Dosyaları", "*.pdf"), ("Tüm Dosyalar", "*.*")],
+            initialdir=MASTER_SOZLESME_PATH if os.path.exists(MASTER_SOZLESME_PATH) else None
+        )
+        
+        if not pdf_path:
+            return
+        
+        # İşlem göstergesi
+        progress_window = tk.Toplevel()
+        progress_window.title("AI İşleniyor")
+        progress_window.geometry("400x150")
+        progress_window.transient(frame_compliance)
+        progress_window.grab_set()
+        
+        tk.Label(progress_window, text="🤖 Yapay Zeka PDF'i Analiz Ediyor...", 
+                font=("Segoe UI", 12, "bold")).pack(pady=20)
+        tk.Label(progress_window, text="Lütfen bekleyin...", 
+                font=("Segoe UI", 10)).pack(pady=10)
+        
+        progress_label = tk.Label(progress_window, text="PDF okunuyor...", 
+                                 font=("Segoe UI", 9))
+        progress_label.pack(pady=10)
+        
+        progress_window.update()
+        
+        def process_pdf():
+            try:
+                progress_label.config(text="AI ile analiz ediliyor...")
+                progress_window.update()
+                
+                # AI ile analiz
+                result = extract_supplier_info_from_pdf(pdf_path)
+                
+                progress_window.destroy()
+                
+                if "error" in result:
+                    messagebox.showerror("Hata", f"PDF analizi başarısız:\n{result['error']}")
+                    return
+                
+                if result.get("success") and "data" in result:
+                    data = result["data"]
+                    
+                    # Formu doldur
+                    if data.get("tedarikci_adi"):
+                        tedarikci_adi_entry.delete(0, tk.END)
+                        tedarikci_adi_entry.insert(0, data["tedarikci_adi"])
+                    
+                    if data.get("yetkili_kisi"):
+                        yetkili_kisi_entry.delete(0, tk.END)
+                        yetkili_kisi_entry.insert(0, data["yetkili_kisi"])
+                    
+                    if data.get("telefon"):
+                        telefon_entry.delete(0, tk.END)
+                        telefon_entry.insert(0, data["telefon"])
+                    
+                    if data.get("mail"):
+                        mail_entry.delete(0, tk.END)
+                        mail_entry.insert(0, data["mail"])
+                    
+                    if data.get("adres"):
+                        adres_text.delete("1.0", tk.END)
+                        adres_text.insert("1.0", data["adres"])
+                    
+                    if data.get("alim_turu") and data["alim_turu"] in ["Kumaş", "Fire", "Tekleme", "Aksesuar", "Diğer"]:
+                        alim_turu_var.set(data["alim_turu"])
+                    
+                    if data.get("sozlesme_bitis") and data["sozlesme_bitis"] != "null":
+                        sozlesme_date_entry.delete(0, tk.END)
+                        sozlesme_date_entry.insert(0, data["sozlesme_bitis"])
+                        sozlesme_date_entry.config(fg="black")
+                    
+                    if data.get("sertifika_bitis") and data["sertifika_bitis"] != "null":
+                        sertifika_date_entry.delete(0, tk.END)
+                        sertifika_date_entry.insert(0, data["sertifika_bitis"])
+                        sertifika_date_entry.config(fg="black")
+                    
+                    messagebox.showinfo("Başarılı", 
+                                      f"✅ PDF'den bilgiler çıkarıldı!\n\n"
+                                      f"Belge Türü: {data.get('belge_turu', 'Bilinmiyor')}\n"
+                                      f"Tedarikçi: {data.get('tedarikci_adi', '-')}\n\n"
+                                      f"Lütfen bilgileri kontrol edin ve 'Kaydet' butonuna tıklayın.")
+                else:
+                    messagebox.showwarning("Uyarı", 
+                                         "PDF analiz edildi ancak yapılandırılmış veri çıkarılamadı.\n\n"
+                                         f"Ham Yanıt:\n{result.get('raw_text', 'Veri yok')[:500]}")
+            
+            except Exception as e:
+                progress_window.destroy()
+                messagebox.showerror("Hata", f"Beklenmeyen hata:\n{str(e)}")
+                import traceback
+                traceback.print_exc()
+        
+        # Thread'de çalıştır (UI donmasını önlemek için)
+        threading.Thread(target=process_pdf, daemon=True).start()
+    
+    tk.Button(form_btn_frame, text="🤖 PDF'den Oku", font=("Segoe UI", 9, "bold"),
+             bg="#9b59b6", fg="white", cursor="hand2", padx=10, pady=5,
+             command=read_from_pdf).pack(side="left", padx=5)
+    
+    def add_test_data():
+        """Test için örnek veri ekle"""
+        result = messagebox.askyesno("Test Verisi Ekle", 
+                                     "5 adet örnek tedarikçi kaydı eklenecek.\n\n"
+                                     "Bu test verileri alarm sistemini test etmek içindir.\n"
+                                     "Devam etmek istiyor musunuz?")
+        if result:
+            success, message = generate_sample_cari_data()
+            if success:
+                messagebox.showinfo("Başarılı", f"✅ {message}\n\nAlarm sistemi artık çalışmalı.")
+                refresh_cari_list()
+                # Alarm display'i güncelle
+                if 'update_all_displays' in dir():
+                    update_all_displays()
+            else:
+                messagebox.showerror("Hata", f"Test verisi eklenemedi:\n{message}")
+    
+    tk.Button(form_btn_frame, text="🧪 Test Verisi Ekle", font=("Segoe UI", 9, "bold"),
+             bg="#3498db", fg="white", cursor="hand2", padx=10, pady=5,
+             command=add_test_data).pack(side="left", padx=5)
     
     # Sağ: Cari Bilgileri Listesi
     list_section = tk.LabelFrame(top_section, text="📋 Kayıtlı Cari Bilgileri", 
