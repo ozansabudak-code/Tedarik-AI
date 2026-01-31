@@ -959,6 +959,612 @@ def notify_critical_alerts():
     except Exception as e:
         print(f"Kritik alarm bildirimi hatası: {str(e)}")
 
+# ---------- GELIŞMIŞ ARAMA FONKSİYONLARI ----------
+def global_search(query):
+    """
+    Tüm modüllerde global arama yapar.
+    
+    Args:
+        query: Arama terimi
+    
+    Returns:
+        dict: Modül bazında sonuçlar
+    """
+    results = {
+        'suppliers': [],
+        'contracts': [],
+        'complaints': [],
+        'stocks': []
+    }
+    
+    if not query or len(query) < 2:
+        return results
+    
+    query_lower = query.lower()
+    
+    try:
+        # Tedarikçi verilerinde ara
+        if 'tedarik_verileri' in globals() and tedarik_verileri is not None:
+            for idx, row in tedarik_verileri.iterrows():
+                row_str = ' '.join([str(v) for v in row.values if pd.notna(v)]).lower()
+                if query_lower in row_str:
+                    results['suppliers'].append({
+                        'type': 'Tedarikçi',
+                        'data': row.to_dict(),
+                        'index': idx
+                    })
+        
+        # Sözleşme/sertifika verilerinde ara
+        try:
+            cari_data = load_cari_bilgiler()
+            if cari_data:
+                for record in cari_data:
+                    record_str = ' '.join([str(v) for v in record.values() if v]).lower()
+                    if query_lower in record_str:
+                        results['contracts'].append({
+                            'type': 'Sözleşme/Sertifika',
+                            'data': record
+                        })
+        except:
+            pass
+        
+        # Reklamasyon verilerinde ara
+        if 'reklamasyon_verileri' in globals() and reklamasyon_verileri is not None:
+            for idx, row in reklamasyon_verileri.iterrows():
+                row_str = ' '.join([str(v) for v in row.values if pd.notna(v)]).lower()
+                if query_lower in row_str:
+                    results['complaints'].append({
+                        'type': 'Reklamasyon',
+                        'data': row.to_dict(),
+                        'index': idx
+                    })
+        
+        # Stok verilerinde ara
+        if 'stok_verileri' in globals() and stok_verileri is not None:
+            for idx, row in stok_verileri.iterrows():
+                row_str = ' '.join([str(v) for v in row.values if pd.notna(v)]).lower()
+                if query_lower in row_str:
+                    results['stocks'].append({
+                        'type': 'Stok',
+                        'data': row.to_dict(),
+                        'index': idx
+                    })
+    
+    except Exception as e:
+        print(f"Global arama hatası: {str(e)}")
+    
+    return results
+
+def show_global_search_dialog():
+    """Global arama diyalog penceresi gösterir."""
+    search_window = ctk.CTkToplevel(root)
+    search_window.title("🔍 Global Arama")
+    search_window.geometry("800x600")
+    search_window.transient(root)
+    search_window.grab_set()
+    
+    # Arama çubuğu
+    search_frame = ctk.CTkFrame(search_window)
+    search_frame.pack(fill="x", padx=10, pady=10)
+    
+    ctk.CTkLabel(search_frame, text="Arama:", font=("Segoe UI", 12, "bold")).pack(side="left", padx=5)
+    
+    search_entry = ctk.CTkEntry(search_frame, width=400, placeholder_text="En az 2 karakter girin...")
+    search_entry.pack(side="left", padx=5, fill="x", expand=True)
+    
+    # Sonuç sayısı label
+    result_count_label = ctk.CTkLabel(search_frame, text="", font=("Segoe UI", 10))
+    result_count_label.pack(side="left", padx=5)
+    
+    # Sonuç listesi (Treeview)
+    result_frame = ctk.CTkFrame(search_window)
+    result_frame.pack(fill="both", expand=True, padx=10, pady=10)
+    
+    # Scrollbar ekle
+    tree_scroll = ttk.Scrollbar(result_frame)
+    tree_scroll.pack(side="right", fill="y")
+    
+    # Treeview
+    result_tree = ttk.Treeview(
+        result_frame,
+        columns=("Modül", "Tür", "Bilgi"),
+        show="headings",
+        yscrollcommand=tree_scroll.set,
+        selectmode="browse"
+    )
+    result_tree.pack(fill="both", expand=True)
+    tree_scroll.config(command=result_tree.yview)
+    
+    result_tree.heading("Modül", text="Modül")
+    result_tree.heading("Tür", text="Tür")
+    result_tree.heading("Bilgi", text="Bilgi")
+    
+    result_tree.column("Modül", width=100)
+    result_tree.column("Tür", width=150)
+    result_tree.column("Bilgi", width=500)
+    
+    def perform_search(event=None):
+        """Arama yap"""
+        query = search_entry.get()
+        
+        # Önceki sonuçları temizle
+        for item in result_tree.get_children():
+            result_tree.delete(item)
+        
+        if len(query) < 2:
+            result_count_label.configure(text="En az 2 karakter girin")
+            return
+        
+        # Arama yap
+        results = global_search(query)
+        
+        total_count = sum(len(v) for v in results.values())
+        result_count_label.configure(text=f"Toplam {total_count} sonuç bulundu")
+        
+        # Sonuçları ekle
+        for supplier in results['suppliers']:
+            data = supplier['data']
+            info = f"Tedarikçi: {data.get('Tedarikçi Adı', 'N/A')}"
+            result_tree.insert("", "end", values=("Tedarik", "Tedarikçi", info))
+        
+        for contract in results['contracts']:
+            data = contract['data']
+            info = f"Tedarikçi: {data.get('Tedarikçi Adı', 'N/A')}, Tür: {data.get('Alım Türü', 'N/A')}"
+            result_tree.insert("", "end", values=("Cari Bilgiler", "Sözleşme/Sertifika", info))
+        
+        for complaint in results['complaints']:
+            data = complaint['data']
+            info = f"Tedarikçi: {data.get('Tedarikçi Adı', 'N/A')}"
+            result_tree.insert("", "end", values=("Reklamasyon", "Şikayet", info))
+        
+        for stock in results['stocks']:
+            data = stock['data']
+            info = f"Stok: {data.get('Stok Kodu', 'N/A')}"
+            result_tree.insert("", "end", values=("Stok", "Ürün", info))
+    
+    # Enter tuşu ile arama
+    search_entry.bind("<Return>", perform_search)
+    
+    # Ara butonu
+    search_btn = ctk.CTkButton(
+        search_frame,
+        text="🔍 Ara",
+        command=perform_search,
+        width=100
+    )
+    search_btn.pack(side="left", padx=5)
+    
+    # Focus
+    search_entry.focus_set()
+    
+    if activity_logger:
+        activity_logger.log_event("GLOBAL_SEARCH", "Global arama açıldı")
+
+# ---------- TOPLU İŞLEM FONKSİYONLARI ----------
+def bulk_export_data():
+    """Tüm verileri toplu olarak export eder."""
+    try:
+        # Kayıt klasörü seç
+        folder = filedialog.askdirectory(title="Export Klasörü Seçin")
+        if not folder:
+            return
+        
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        export_count = 0
+        
+        # Tedarik verileri
+        if 'tedarik_verileri' in globals() and tedarik_verileri is not None:
+            tedarik_file = os.path.join(folder, f"tedarik_export_{timestamp}.xlsx")
+            tedarik_verileri.to_excel(tedarik_file, index=False)
+            export_count += 1
+        
+        # Reklamasyon verileri
+        if 'reklamasyon_verileri' in globals() and reklamasyon_verileri is not None:
+            reklamasyon_file = os.path.join(folder, f"reklamasyon_export_{timestamp}.xlsx")
+            reklamasyon_verileri.to_excel(reklamasyon_file, index=False)
+            export_count += 1
+        
+        # Stok verileri
+        if 'stok_verileri' in globals() and stok_verileri is not None:
+            stok_file = os.path.join(folder, f"stok_export_{timestamp}.xlsx")
+            stok_verileri.to_excel(stok_file, index=False)
+            export_count += 1
+        
+        # Cari bilgiler
+        try:
+            cari_data = load_cari_bilgiler()
+            if cari_data:
+                cari_file = os.path.join(folder, f"cari_export_{timestamp}.xlsx")
+                df_cari = pd.DataFrame(cari_data)
+                df_cari.to_excel(cari_file, index=False)
+                export_count += 1
+        except:
+            pass
+        
+        if export_count > 0:
+            messagebox.showinfo(
+                "Başarılı",
+                f"{export_count} dosya başarıyla export edildi!\n\nKonum: {folder}"
+            )
+            if activity_logger:
+                activity_logger.log_event("BULK_EXPORT", f"{export_count} dosya export edildi", folder)
+        else:
+            messagebox.showwarning("Uyarı", "Export edilecek veri bulunamadı!")
+    
+    except Exception as e:
+        messagebox.showerror("Hata", f"Toplu export hatası: {str(e)}")
+        if activity_logger:
+            activity_logger.log_error(f"Toplu export hatası: {str(e)}", "BULK_EXPORT")
+
+def bulk_import_files():
+    """Çoklu dosya import eder."""
+    try:
+        files = filedialog.askopenfilenames(
+            title="Import Edilecek Dosyaları Seçin",
+            filetypes=[("Excel Files", "*.xlsx *.xls"), ("All Files", "*.*")]
+        )
+        
+        if not files:
+            return
+        
+        success_count = 0
+        error_count = 0
+        
+        progress_window = ctk.CTkToplevel(root)
+        progress_window.title("Toplu Import")
+        progress_window.geometry("400x150")
+        progress_window.transient(root)
+        
+        progress_label = ctk.CTkLabel(progress_window, text="Dosyalar işleniyor...")
+        progress_label.pack(pady=10)
+        
+        progress_bar = ttk.Progressbar(progress_window, length=300, mode='determinate')
+        progress_bar.pack(pady=10)
+        
+        status_label = ctk.CTkLabel(progress_window, text="")
+        status_label.pack(pady=10)
+        
+        total_files = len(files)
+        
+        for idx, file in enumerate(files):
+            try:
+                filename = os.path.basename(file)
+                status_label.configure(text=f"İşleniyor: {filename}")
+                progress_bar['value'] = (idx + 1) / total_files * 100
+                progress_window.update()
+                
+                # Dosya tipine göre işle
+                df = pd.read_excel(file)
+                
+                # Basit kontrol - sütun adlarına bakarak dosya tipini tahmin et
+                columns = df.columns.tolist()
+                
+                if 'Tedarikçi Adı' in columns and 'Birim Fiyat' in columns:
+                    # Tedarik verisi olabilir
+                    global tedarik_verileri
+                    if tedarik_verileri is None:
+                        tedarik_verileri = df
+                    else:
+                        tedarik_verileri = pd.concat([tedarik_verileri, df], ignore_index=True)
+                    success_count += 1
+                
+                elif 'Reklamasyon' in ' '.join(columns) or 'Şikayet' in ' '.join(columns):
+                    # Reklamasyon verisi olabilir
+                    global reklamasyon_verileri
+                    if reklamasyon_verileri is None:
+                        reklamasyon_verileri = df
+                    else:
+                        reklamasyon_verileri = pd.concat([reklamasyon_verileri, df], ignore_index=True)
+                    success_count += 1
+                
+                else:
+                    # Genel import
+                    success_count += 1
+            
+            except Exception as e:
+                print(f"Dosya import hatası ({filename}): {str(e)}")
+                error_count += 1
+        
+        progress_window.destroy()
+        
+        messagebox.showinfo(
+            "Toplu Import Tamamlandı",
+            f"Başarılı: {success_count}\nHatalı: {error_count}\n\nToplam: {total_files} dosya"
+        )
+        
+        if activity_logger:
+            activity_logger.log_event("BULK_IMPORT", f"{success_count} dosya import edildi")
+    
+    except Exception as e:
+        messagebox.showerror("Hata", f"Toplu import hatası: {str(e)}")
+        if activity_logger:
+            activity_logger.log_error(f"Toplu import hatası: {str(e)}", "BULK_IMPORT")
+
+# ---------- KARKALIK MOD FONKSİYONLARI ----------
+# Dark mode zaten ctk.set_appearance_mode("dark") ile ayarlanmış
+# Ek toggle fonksiyonu
+current_theme = "dark"
+
+def toggle_dark_mode():
+    """Karanlık/Aydınlık mod arasında geçiş yapar."""
+    global current_theme
+    
+    if current_theme == "dark":
+        ctk.set_appearance_mode("light")
+        current_theme = "light"
+        theme_text = "Aydınlık Mod"
+    else:
+        ctk.set_appearance_mode("dark")
+        current_theme = "dark"
+        theme_text = "Karanlık Mod"
+    
+    # Ayarları kaydet
+    settings = load_settings_dict()
+    settings['theme'] = current_theme
+    save_settings_dict(settings)
+    
+    messagebox.showinfo("Tema Değiştirildi", f"{theme_text} aktif edildi!")
+    
+    if activity_logger:
+        activity_logger.log_event("THEME_CHANGE", f"Tema değiştirildi: {current_theme}")
+
+def load_settings_dict():
+    """Ayarları dict olarak yükler."""
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except:
+        pass
+    return {}
+
+def save_settings_dict(settings):
+    """Ayarları dict olarak kaydeder."""
+    try:
+        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"Ayar kaydetme hatası: {str(e)}")
+
+# ---------- VERİ DOĞRULAMA FONKSİYONLARI ----------
+def validate_email(email):
+    """Email formatını doğrular."""
+    import re
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+def validate_phone(phone):
+    """Telefon numarası formatını doğrular."""
+    import re
+    # Türkiye telefon formatları: 05xx xxx xx xx veya +90 5xx xxx xx xx
+    phone = re.sub(r'[\s\-\(\)]', '', phone)  # Boşluk ve özel karakterleri temizle
+    pattern = r'^(\+90|0)?5\d{9}$'
+    return re.match(pattern, phone) is not None
+
+def validate_date(date_str, date_format="%Y-%m-%d"):
+    """Tarih formatını doğrular."""
+    try:
+        datetime.datetime.strptime(date_str, date_format)
+        return True
+    except:
+        return False
+
+def validate_required_fields(data_dict, required_fields):
+    """
+    Zorunlu alanları kontrol eder.
+    
+    Args:
+        data_dict: Kontrol edilecek veri dictionary
+        required_fields: Zorunlu alan listesi
+    
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    missing_fields = []
+    
+    for field in required_fields:
+        if field not in data_dict or not data_dict[field] or str(data_dict[field]).strip() == '':
+            missing_fields.append(field)
+    
+    if missing_fields:
+        return False, f"Zorunlu alanlar eksik: {', '.join(missing_fields)}"
+    
+    return True, ""
+
+def validate_supplier_data(data):
+    """
+    Tedarikçi verilerini doğrular.
+    
+    Args:
+        data: Tedarikçi veri dictionary
+    
+    Returns:
+        tuple: (is_valid, errors_list)
+    """
+    errors = []
+    
+    # Zorunlu alanlar
+    required_fields = ['Tedarikçi Adı']
+    is_valid, error_msg = validate_required_fields(data, required_fields)
+    if not is_valid:
+        errors.append(error_msg)
+    
+    # Email kontrolü
+    if 'Mail' in data and data['Mail']:
+        if not validate_email(str(data['Mail'])):
+            errors.append(f"Geçersiz email formatı: {data['Mail']}")
+    
+    # Telefon kontrolü
+    if 'Telefon' in data and data['Telefon']:
+        if not validate_phone(str(data['Telefon'])):
+            errors.append(f"Geçersiz telefon formatı: {data['Telefon']}")
+    
+    # Tarih kontrolü
+    date_fields = ['Sözleşme Bitiş Tarihi', 'Sertifika Bitiş Tarihi', 'Başlangıç Tarihi', 'Bitiş Tarihi']
+    for field in date_fields:
+        if field in data and data[field] and not isinstance(data[field], datetime.datetime):
+            # String ise kontrol et
+            if isinstance(data[field], str) and not validate_date(data[field]):
+                errors.append(f"Geçersiz tarih formatı ({field}): {data[field]}")
+    
+    return len(errors) == 0, errors
+
+# ---------- UNDO/REDO FONKSİYONALİTESİ ----------
+undo_stack = []
+redo_stack = []
+MAX_UNDO_STACK = 50
+
+def save_state_for_undo(state_name, data):
+    """
+    Mevcut durumu undo stack'e kaydeder.
+    
+    Args:
+        state_name: Durum açıklaması
+        data: Kaydedilecek veri (deep copy yapılacak)
+    """
+    global undo_stack, redo_stack
+    
+    try:
+        import copy
+        state = {
+            'name': state_name,
+            'data': copy.deepcopy(data),
+            'timestamp': datetime.datetime.now()
+        }
+        
+        undo_stack.append(state)
+        
+        # Stack boyutunu sınırla
+        if len(undo_stack) > MAX_UNDO_STACK:
+            undo_stack.pop(0)
+        
+        # Yeni işlem yapıldığında redo stack'i temizle
+        redo_stack.clear()
+        
+    except Exception as e:
+        print(f"Undo state kaydetme hatası: {str(e)}")
+
+def undo_last_action():
+    """Son işlemi geri alır."""
+    global undo_stack, redo_stack
+    
+    if not undo_stack:
+        messagebox.showinfo("Undo", "Geri alınacak işlem yok!")
+        return None
+    
+    try:
+        # Son durumu al
+        state = undo_stack.pop()
+        
+        # Redo için kaydet
+        redo_stack.append(state)
+        
+        messagebox.showinfo("Undo", f"İşlem geri alındı: {state['name']}")
+        
+        if activity_logger:
+            activity_logger.log_event("UNDO", f"Geri alındı: {state['name']}")
+        
+        return state['data']
+    
+    except Exception as e:
+        messagebox.showerror("Hata", f"Undo hatası: {str(e)}")
+        return None
+
+def redo_last_action():
+    """Geri alınan son işlemi tekrar yapar."""
+    global undo_stack, redo_stack
+    
+    if not redo_stack:
+        messagebox.showinfo("Redo", "Tekrar yapılacak işlem yok!")
+        return None
+    
+    try:
+        # Son redo durumunu al
+        state = redo_stack.pop()
+        
+        # Undo'ya geri ekle
+        undo_stack.append(state)
+        
+        messagebox.showinfo("Redo", f"İşlem tekrar yapıldı: {state['name']}")
+        
+        if activity_logger:
+            activity_logger.log_event("REDO", f"Tekrar yapıldı: {state['name']}")
+        
+        return state['data']
+    
+    except Exception as e:
+        messagebox.showerror("Hata", f"Redo hatası: {str(e)}")
+        return None
+
+# ---------- HIZLI ERİŞİM FONKSİYONLARI ----------
+recent_items = []
+MAX_RECENT_ITEMS = 10
+
+def add_to_recent_items(item_type, item_name, item_data=None):
+    """Son kullanılan öğelere ekler."""
+    global recent_items
+    
+    item = {
+        'type': item_type,
+        'name': item_name,
+        'data': item_data,
+        'timestamp': datetime.datetime.now()
+    }
+    
+    # Aynı öğe varsa kaldır
+    recent_items = [i for i in recent_items if not (i['type'] == item_type and i['name'] == item_name)]
+    
+    # Başa ekle
+    recent_items.insert(0, item)
+    
+    # Boyut kontrolü
+    if len(recent_items) > MAX_RECENT_ITEMS:
+        recent_items = recent_items[:MAX_RECENT_ITEMS]
+
+def show_recent_items_menu():
+    """Son kullanılan öğeleri gösterir."""
+    if not recent_items:
+        messagebox.showinfo("Son Kullanılanlar", "Henüz son kullanılan öğe yok!")
+        return
+    
+    recent_window = ctk.CTkToplevel(root)
+    recent_window.title("📋 Son Kullanılanlar")
+    recent_window.geometry("600x400")
+    recent_window.transient(root)
+    
+    # Liste
+    listbox_frame = ctk.CTkFrame(recent_window)
+    listbox_frame.pack(fill="both", expand=True, padx=10, pady=10)
+    
+    # Treeview
+    tree_scroll = ttk.Scrollbar(listbox_frame)
+    tree_scroll.pack(side="right", fill="y")
+    
+    recent_tree = ttk.Treeview(
+        listbox_frame,
+        columns=("Tür", "Ad", "Zaman"),
+        show="headings",
+        yscrollcommand=tree_scroll.set
+    )
+    recent_tree.pack(fill="both", expand=True)
+    tree_scroll.config(command=recent_tree.yview)
+    
+    recent_tree.heading("Tür", text="Tür")
+    recent_tree.heading("Ad", text="Ad")
+    recent_tree.heading("Zaman", text="Zaman")
+    
+    recent_tree.column("Tür", width=100)
+    recent_tree.column("Ad", width=300)
+    recent_tree.column("Zaman", width=150)
+    
+    for item in recent_items:
+        time_str = item['timestamp'].strftime("%Y-%m-%d %H:%M")
+        recent_tree.insert("", "end", values=(item['type'], item['name'], time_str))
+    
+    # Kapat butonu
+    close_btn = ctk.CTkButton(recent_window, text="Kapat", command=recent_window.destroy)
+    close_btn.pack(pady=10)
+
 # ---------- MYSQL BAĞLANTI FONKSİYONLARI ----------
 def create_mysql_connection():
     """
@@ -6269,7 +6875,7 @@ def save_settings():
         print(f"Ayar kaydetme hatası: {e}")
 
 def load_settings():
-    global monitoring_folder
+    global monitoring_folder, current_theme
     try:
         with open(SETTINGS_FILE, 'r') as f:
             settings = json.load(f)
@@ -6277,6 +6883,11 @@ def load_settings():
             delivery_weight.set(settings.get('delivery_weight', 0.3))
             return_weight.set(settings.get('return_weight', 0.3))
             exclude_outliers_var.set(settings.get('exclude_outliers', False))  # Varsayılan FALSE
+            
+            # Tema ayarını yükle
+            saved_theme = settings.get('theme', 'dark')
+            current_theme = saved_theme
+            ctk.set_appearance_mode(saved_theme)
             
             # Klasör izleme ayarını yükle
             saved_folder = settings.get('monitoring_folder')
@@ -10043,8 +10654,74 @@ ctk.set_appearance_mode("dark")  # Modes: "System" (default), "Dark", "Light"
 ctk.set_default_color_theme("blue")  # Themes: "blue" (default), "green", "dark-blue"
 
 root = ctk.CTk()
-root.title("Tedarikçi Rapor Analiz v2.8 (Production Pipeline & Commodity Intelligence)")
+root.title("Tedarikçi Rapor Analiz v2.9 - Gelişmiş Özellikler Sürümü")
 root.geometry("1280x850")
+
+# ---------- KLAVYE KISAYOLLARI ----------
+def setup_keyboard_shortcuts():
+    """Klavye kısayollarını tanımlar."""
+    # Ctrl+F: Global arama
+    root.bind('<Control-f>', lambda e: show_global_search_dialog())
+    root.bind('<Control-F>', lambda e: show_global_search_dialog())
+    
+    # Ctrl+S: Hızlı yedek al
+    root.bind('<Control-s>', lambda e: create_backup())
+    root.bind('<Control-S>', lambda e: create_backup())
+    
+    # Ctrl+R: Veriyi yeniden yükle
+    root.bind('<Control-r>', lambda e: load_daily_files())
+    root.bind('<Control-R>', lambda e: load_daily_files())
+    
+    # Ctrl+Q: Çıkış
+    root.bind('<Control-q>', lambda e: on_closing())
+    root.bind('<Control-Q>', lambda e: on_closing())
+    
+    # F5: Mevcut sayfayı yenile
+    def refresh_current_page(e=None):
+        if 'current_page_name' in globals():
+            show_page(current_page_name)
+    root.bind('<F5>', refresh_current_page)
+    
+    # Ctrl+Z: Undo (mevcut durumda)
+    root.bind('<Control-z>', lambda e: undo_last_action())
+    root.bind('<Control-Z>', lambda e: undo_last_action())
+    
+    # Ctrl+Y: Redo
+    root.bind('<Control-y>', lambda e: redo_last_action())
+    root.bind('<Control-Y>', lambda e: redo_last_action())
+    
+    # Ctrl+E: Export
+    root.bind('<Control-e>', lambda e: bulk_export_data())
+    root.bind('<Control-E>', lambda e: bulk_export_data())
+    
+    # Ctrl+I: Import
+    root.bind('<Control-i>', lambda e: bulk_import_files())
+    root.bind('<Control-I>', lambda e: bulk_import_files())
+    
+    # Ctrl+T: Tema değiştir
+    root.bind('<Control-t>', lambda e: toggle_dark_mode())
+    root.bind('<Control-T>', lambda e: toggle_dark_mode())
+    
+    # Ctrl+H: Son kullanılanlar
+    root.bind('<Control-h>', lambda e: show_recent_items_menu())
+    root.bind('<Control-H>', lambda e: show_recent_items_menu())
+    
+    print("✅ Klavye kısayolları aktif edildi!")
+    print("  Ctrl+F: Global Arama")
+    print("  Ctrl+S: Yedek Al")
+    print("  Ctrl+R: Yeniden Yükle")
+    print("  Ctrl+Q: Çıkış")
+    print("  F5: Sayfa Yenile")
+    print("  Ctrl+Z: Geri Al")
+    print("  Ctrl+Y: İleri Al")
+    print("  Ctrl+E: Export")
+    print("  Ctrl+I: Import")
+    print("  Ctrl+T: Tema Değiştir")
+    print("  Ctrl+H: Son Kullanılanlar")
+
+# Klavye kısayollarını ayarla
+setup_keyboard_shortcuts()
+
 # Ayarlar değişkenleri global olarak tanımlanır
 price_weight = tk.DoubleVar(value=0.4)
 delivery_weight = tk.DoubleVar(value=0.3)
@@ -10225,6 +10902,16 @@ ttk.Button(system_tools_frame, text="📥 Yedek Yükle",
           command=restore_backup).pack(fill="x", pady=2)
 ttk.Button(system_tools_frame, text="🔔 Bildirimleri Test Et", 
           command=lambda: show_desktop_notification("Test Bildirimi", "Sistem çalışıyor! ✅")).pack(fill="x", pady=2)
+ttk.Button(system_tools_frame, text="🔍 Global Arama (Ctrl+F)", 
+          command=show_global_search_dialog).pack(fill="x", pady=2)
+ttk.Button(system_tools_frame, text="📦 Toplu Export", 
+          command=bulk_export_data).pack(fill="x", pady=2)
+ttk.Button(system_tools_frame, text="📥 Toplu Import", 
+          command=bulk_import_files).pack(fill="x", pady=2)
+ttk.Button(system_tools_frame, text="🌓 Tema Değiştir", 
+          command=toggle_dark_mode).pack(fill="x", pady=2)
+ttk.Button(system_tools_frame, text="📋 Son Kullanılanlar", 
+          command=show_recent_items_menu).pack(fill="x", pady=2)
 
 ctk.CTkLabel(sidebar_content_frame, text="v2.8 | DeFacto", font=("Arial", 8), text_color="#95a5a6").pack(side="bottom", pady=10)
 
