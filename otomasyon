@@ -1313,8 +1313,8 @@ def scroll_ticker_animation():
     # İlk karakteri sona al
     new_text = text[1:] + text[0]
     ticker_label.configure(text=new_text)
-    # Hız ayarı (ms) - 1000ms'ye çıkarıldı (performans iyileştirmesi)
-    root.after(1000, scroll_ticker_animation)
+    # Hız ayarı (ms) - 500ms (performans ve akıcılık dengesi için optimize edildi)
+    root.after(500, scroll_ticker_animation)
 
 # ---------- HABERLER (RSS) FONKSİYONLARI ----------
 def init_news_tab():
@@ -9906,6 +9906,10 @@ def auto_run_initial_analysis():
     except Exception as e:
         print(f"Otomatik analiz hatası: {e}")
 
+def start_file_loading():
+    """Merkezi dosya yükleme işlemini thread'de başlatır"""
+    threading.Thread(target=load_daily_files, daemon=True).start()
+
 if __name__ == "__main__":
     # Activity logger'ı başlat
     activity_logger = ActivityLogger()
@@ -9945,8 +9949,8 @@ if __name__ == "__main__":
     # Ticker animasyonunu başlat - mainloop başladıktan sonra (performans iyileştirmesi)
     root.after(100, scroll_ticker_animation)
     
-    # Merkezi dosyaları otomatik yükle - mainloop başladıktan sonra
-    root.after(100, load_daily_files)
+    # Merkezi dosyaları otomatik yükle - mainloop başladıktan sonra (thread'de çalışır)
+    root.after(100, start_file_loading)
     
     try:
         root.mainloop()
