@@ -8222,30 +8222,96 @@ Cevabını JSON formatında ver."""
 def extract_supplier_info_from_pdf(pdf_path):
     """Sözleşme veya Sertifika PDF'inden tedarikçi bilgilerini AI ile çıkar"""
     try:
-        if not PYPDF2_AVAILABLE:
-            return {"error": "PyPDF2 kütüphanesi yüklü değil"}
-        
         if not GENAI_AVAILABLE or not GEMINI_API_KEY:
             return {"error": "Gemini AI yapılandırılmamış. API anahtarını ayarlayın."}
         
-        import PyPDF2
         import google.generativeai as genai
         
         # API yapılandırması
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('models/gemini-2.0-flash')
         
-        # PDF okuma
+        # PDF okuma - Çoklu yöntem denemesi
         print(f"[AI PDF] PDF okunuyor: {pdf_path}")
-        with open(pdf_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            text = ""
-            # İlk 10 sayfa (genelde yeterli)
-            for page in pdf_reader.pages[:10]:
-                text += page.extract_text()
+        text = ""
+        extraction_method = "None"
         
+        # Yöntem 1: PyPDF2 (varsayılan, hızlı)
+        if PYPDF2_AVAILABLE and not text.strip():
+            try:
+                print("[AI PDF] Yöntem 1: PyPDF2 ile deneniyor...")
+                import PyPDF2
+                with open(pdf_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    page_count = len(pdf_reader.pages)
+                    print(f"[AI PDF] PDF sayfa sayısı: {page_count}")
+                    
+                    # İlk 10 sayfa veya tüm sayfalara kadar
+                    for i, page in enumerate(pdf_reader.pages[:min(10, page_count)]):
+                        page_text = page.extract_text()
+                        if page_text:
+                            text += page_text + "\n"
+                    
+                    if text.strip():
+                        extraction_method = "PyPDF2"
+                        print(f"[AI PDF] PyPDF2 ile {len(text)} karakter çıkarıldı")
+            except Exception as e:
+                print(f"[AI PDF] PyPDF2 hatası: {e}")
+        
+        # Yöntem 2: pdfplumber (daha güçlü, daha yavaş)
         if not text.strip():
-            return {"error": "PDF'den metin çıkarılamadı"}
+            try:
+                print("[AI PDF] Yöntem 2: pdfplumber ile deneniyor...")
+                import pdfplumber
+                with pdfplumber.open(pdf_path) as pdf:
+                    page_count = len(pdf.pages)
+                    print(f"[AI PDF] PDF sayfa sayısı: {page_count}")
+                    
+                    for i, page in enumerate(pdf.pages[:min(10, page_count)]):
+                        page_text = page.extract_text()
+                        if page_text:
+                            text += page_text + "\n"
+                    
+                    if text.strip():
+                        extraction_method = "pdfplumber"
+                        print(f"[AI PDF] pdfplumber ile {len(text)} karakter çıkarıldı")
+            except ImportError:
+                print("[AI PDF] pdfplumber yüklü değil, alternatif yöntem kullanılacak")
+            except Exception as e:
+                print(f"[AI PDF] pdfplumber hatası: {e}")
+        
+        # Yöntem 3: pdfminer.six (en güçlü, en yavaş)
+        if not text.strip():
+            try:
+                print("[AI PDF] Yöntem 3: pdfminer ile deneniyor...")
+                from pdfminer.high_level import extract_text as pdfminer_extract
+                text = pdfminer_extract(pdf_path, maxpages=10)
+                if text.strip():
+                    extraction_method = "pdfminer"
+                    print(f"[AI PDF] pdfminer ile {len(text)} karakter çıkarıldı")
+            except ImportError:
+                print("[AI PDF] pdfminer.six yüklü değil")
+            except Exception as e:
+                print(f"[AI PDF] pdfminer hatası: {e}")
+        
+        # Hiçbir yöntem çalışmadıysa
+        if not text.strip():
+            error_msg = (
+                "PDF'den metin çıkarılamadı.\n\n"
+                "Olası nedenler:\n"
+                "1. PDF taranmış (image-based) olabilir - OCR gerekiyor\n"
+                "2. PDF şifreli veya korumalı olabilir\n"
+                "3. PDF bozuk veya okunamaz durumda\n\n"
+                "Çözüm önerileri:\n"
+                "- PDF'i Adobe Reader ile açıp tekrar kaydedin\n"
+                "- PDF'i text-based format olarak export edin\n"
+                "- Manuel olarak bilgileri girin"
+            )
+            return {"error": error_msg}
+        
+        # Başarı mesajı
+        print(f"[AI PDF] ✅ Metin başarıyla çıkarıldı ({extraction_method} yöntemi)")
+        print(f"[AI PDF] Toplam {len(text)} karakter, ilk 200: {text[:200]}...")
         
         # AI ile analiz
         prompt = f"""Aşağıdaki Türkçe sözleşme veya sertifika belgesini analiz et ve tedarikçi bilgilerini çıkar.
@@ -8261,6 +8327,7 @@ Lütfen şu bilgileri çıkar ve JSON formatında ver:
     "mail": "Email adresi",
     "adres": "Şirket adresi",
     "alim_turu": "Kumaş, Fire, Tekleme, Aksesuar veya Diğer (belgeden tahmin et)",
+    "sozlesme_baslangic": "Sözleşme başlangıç tarihi YYYY-MM-DD formatında",
     "sozlesme_bitis": "Sözleşme bitiş tarihi YYYY-MM-DD formatında",
     "sertifika_bitis": "Sertifika bitiş tarihi YYYY-MM-DD formatında",
     "belge_turu": "Sözleşme veya Sertifika"
@@ -8269,7 +8336,7 @@ Lütfen şu bilgileri çıkar ve JSON formatında ver:
 Eğer bir bilgi bulunamazsa null değeri ver.
 Sadece JSON formatında yanıt ver, başka açıklama ekleme."""
         
-        print("[AI PDF] AI analizi yapılıyor...")
+        print(f"[AI PDF] AI analizi yapılıyor (çıkarma yöntemi: {extraction_method})...")
         response = model.generate_content(prompt)
         
         # JSON parse et
@@ -8404,7 +8471,7 @@ def initialize_cari_bilgiler_excel():
             
             # Başlıkları ekle
             headers = ["Tedarikçi Adı", "Yetkili Kişi", "Telefon", "Adres", "Alım Türü", "Mail", "Eksik Evraklar", 
-                      "Sözleşme Bitiş Tarihi", "Sertifika Bitiş Tarihi", "Kayıt Tarihi"]
+                      "Başlangıç Tarihi", "Bitiş Tarihi", "Sözleşme Bitiş Tarihi", "Sertifika Bitiş Tarihi", "Kayıt Tarihi"]
             ws.append(headers)
             
             # Başlıkları formatla
@@ -8425,9 +8492,11 @@ def initialize_cari_bilgiler_excel():
             ws.column_dimensions['E'].width = 20  # Alım Türü
             ws.column_dimensions['F'].width = 30  # Mail
             ws.column_dimensions['G'].width = 40  # Eksik Evraklar
-            ws.column_dimensions['H'].width = 20  # Sözleşme Bitiş Tarihi
-            ws.column_dimensions['I'].width = 20  # Sertifika Bitiş Tarihi
-            ws.column_dimensions['J'].width = 20  # Kayıt Tarihi
+            ws.column_dimensions['H'].width = 20  # Başlangıç Tarihi
+            ws.column_dimensions['I'].width = 20  # Bitiş Tarihi
+            ws.column_dimensions['J'].width = 20  # Sözleşme Bitiş Tarihi
+            ws.column_dimensions['K'].width = 20  # Sertifika Bitiş Tarihi
+            ws.column_dimensions['L'].width = 20  # Kayıt Tarihi
             
             wb.save(MASTER_CARI_BILGILER_PATH)
             print(f"Cari Bilgiler dosyası oluşturuldu: {MASTER_CARI_BILGILER_PATH}")
@@ -8526,8 +8595,10 @@ def save_cari_bilgi(data):
                     data.get('alim_turu', ''),
                     data.get('mail', ''),
                     data.get('eksik_evraklar', ''),
-                    data.get('sozlesme_bitis', ''),  # Sözleşme bitiş tarihi
-                    data.get('sertifika_bitis', ''),  # Sertifika bitiş tarihi
+                    data.get('baslangic_tarihi', ''),  # Başlangıç tarihi
+                    data.get('bitis_tarihi', ''),  # Bitiş tarihi (genel)
+                    data.get('sozlesme_bitis', ''),  # Sözleşme bitiş tarihi (spesifik)
+                    data.get('sertifika_bitis', ''),  # Sertifika bitiş tarihi (spesifik)
                     datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 ]
                 ws.append(new_row)
@@ -9211,11 +9282,53 @@ def init_compliance_center_tab():
         tk.Checkbutton(eksik_evrak_frame, text=evrak, variable=var, 
                       font=("Segoe UI", 8), bg="white").grid(row=i, column=0, sticky="w")
     
-    # Sözleşme Bitiş Tarihi
-    tk.Label(form_frame, text="Sözleşme Bitiş:", font=("Segoe UI", 9, "bold"),
+    # Başlangıç Tarihi (Sözleşme/Sertifika ortak)
+    tk.Label(form_frame, text="Başlangıç Tarihi:", font=("Segoe UI", 9, "bold"),
              bg="white").grid(row=7, column=0, sticky="w", padx=5, pady=3)
+    baslangic_date_entry = tk.Entry(form_frame, font=("Segoe UI", 9), width=25)
+    baslangic_date_entry.grid(row=7, column=1, padx=5, pady=3, sticky="ew")
+    baslangic_date_entry.insert(0, "YYYY-MM-DD")
+    baslangic_date_entry.config(fg="gray")
+    
+    def baslangic_date_focus_in(event):
+        if baslangic_date_entry.get() == "YYYY-MM-DD":
+            baslangic_date_entry.delete(0, tk.END)
+            baslangic_date_entry.config(fg="black")
+    
+    def baslangic_date_focus_out(event):
+        if not baslangic_date_entry.get():
+            baslangic_date_entry.insert(0, "YYYY-MM-DD")
+            baslangic_date_entry.config(fg="gray")
+    
+    baslangic_date_entry.bind("<FocusIn>", baslangic_date_focus_in)
+    baslangic_date_entry.bind("<FocusOut>", baslangic_date_focus_out)
+    
+    # Bitiş Tarihi (Sözleşme/Sertifika ortak - genel)
+    tk.Label(form_frame, text="Bitiş Tarihi:", font=("Segoe UI", 9, "bold"),
+             bg="white").grid(row=8, column=0, sticky="w", padx=5, pady=3)
+    bitis_date_entry = tk.Entry(form_frame, font=("Segoe UI", 9), width=25)
+    bitis_date_entry.grid(row=8, column=1, padx=5, pady=3, sticky="ew")
+    bitis_date_entry.insert(0, "YYYY-MM-DD")
+    bitis_date_entry.config(fg="gray")
+    
+    def bitis_date_focus_in(event):
+        if bitis_date_entry.get() == "YYYY-MM-DD":
+            bitis_date_entry.delete(0, tk.END)
+            bitis_date_entry.config(fg="black")
+    
+    def bitis_date_focus_out(event):
+        if not bitis_date_entry.get():
+            bitis_date_entry.insert(0, "YYYY-MM-DD")
+            bitis_date_entry.config(fg="gray")
+    
+    bitis_date_entry.bind("<FocusIn>", bitis_date_focus_in)
+    bitis_date_entry.bind("<FocusOut>", bitis_date_focus_out)
+    
+    # Sözleşme Bitiş Tarihi (Spesifik)
+    tk.Label(form_frame, text="Sözleşme Bitiş:", font=("Segoe UI", 9, "bold"),
+             bg="white").grid(row=9, column=0, sticky="w", padx=5, pady=3)
     sozlesme_date_entry = tk.Entry(form_frame, font=("Segoe UI", 9), width=25)
-    sozlesme_date_entry.grid(row=7, column=1, padx=5, pady=3, sticky="ew")
+    sozlesme_date_entry.grid(row=9, column=1, padx=5, pady=3, sticky="ew")
     sozlesme_date_entry.insert(0, "YYYY-MM-DD")
     sozlesme_date_entry.config(fg="gray")
     
@@ -9234,9 +9347,9 @@ def init_compliance_center_tab():
     
     # Sertifika Bitiş Tarihi
     tk.Label(form_frame, text="Sertifika Bitiş:", font=("Segoe UI", 9, "bold"),
-             bg="white").grid(row=8, column=0, sticky="w", padx=5, pady=3)
+             bg="white").grid(row=10, column=0, sticky="w", padx=5, pady=3)
     sertifika_date_entry = tk.Entry(form_frame, font=("Segoe UI", 9), width=25)
-    sertifika_date_entry.grid(row=8, column=1, padx=5, pady=3, sticky="ew")
+    sertifika_date_entry.grid(row=10, column=1, padx=5, pady=3, sticky="ew")
     sertifika_date_entry.insert(0, "YYYY-MM-DD")
     sertifika_date_entry.config(fg="gray")
     
@@ -9269,6 +9382,12 @@ def init_compliance_center_tab():
         alim_turu_var.set("Kumaş")
         for var in evrak_checkboxes.values():
             var.set(False)
+        baslangic_date_entry.delete(0, tk.END)
+        baslangic_date_entry.insert(0, "YYYY-MM-DD")
+        baslangic_date_entry.config(fg="gray")
+        bitis_date_entry.delete(0, tk.END)
+        bitis_date_entry.insert(0, "YYYY-MM-DD")
+        bitis_date_entry.config(fg="gray")
         sozlesme_date_entry.delete(0, tk.END)
         sozlesme_date_entry.insert(0, "YYYY-MM-DD")
         sozlesme_date_entry.config(fg="gray")
@@ -9287,6 +9406,14 @@ def init_compliance_center_tab():
         alim_turu = alim_turu_var.get()
         
         # Tarih bilgilerini al
+        baslangic_tarihi = baslangic_date_entry.get().strip()
+        if baslangic_tarihi == "YYYY-MM-DD" or not baslangic_tarihi:
+            baslangic_tarihi = ""
+        
+        bitis_tarihi = bitis_date_entry.get().strip()
+        if bitis_tarihi == "YYYY-MM-DD" or not bitis_tarihi:
+            bitis_tarihi = ""
+        
         sozlesme_bitis = sozlesme_date_entry.get().strip()
         if sozlesme_bitis == "YYYY-MM-DD" or not sozlesme_bitis:
             sozlesme_bitis = ""
@@ -9317,6 +9444,8 @@ def init_compliance_center_tab():
             'alim_turu': alim_turu,
             'mail': mail,
             'eksik_evraklar': eksik_evrak_str,
+            'baslangic_tarihi': baslangic_tarihi,
+            'bitis_tarihi': bitis_tarihi,
             'sozlesme_bitis': sozlesme_bitis,
             'sertifika_bitis': sertifika_bitis
         }
@@ -9410,7 +9539,17 @@ def init_compliance_center_tab():
                     if data.get("alim_turu") and data["alim_turu"] in ["Kumaş", "Fire", "Tekleme", "Aksesuar", "Diğer"]:
                         alim_turu_var.set(data["alim_turu"])
                     
+                    if data.get("sozlesme_baslangic") and data["sozlesme_baslangic"] != "null":
+                        baslangic_date_entry.delete(0, tk.END)
+                        baslangic_date_entry.insert(0, data["sozlesme_baslangic"])
+                        baslangic_date_entry.config(fg="black")
+                    
                     if data.get("sozlesme_bitis") and data["sozlesme_bitis"] != "null":
+                        # Genel bitiş tarihine de koy
+                        bitis_date_entry.delete(0, tk.END)
+                        bitis_date_entry.insert(0, data["sozlesme_bitis"])
+                        bitis_date_entry.config(fg="black")
+                        # Sözleşme bitiş tarihine de koy
                         sozlesme_date_entry.delete(0, tk.END)
                         sozlesme_date_entry.insert(0, data["sozlesme_bitis"])
                         sozlesme_date_entry.config(fg="black")
@@ -9511,7 +9650,7 @@ def init_compliance_center_tab():
     tree_scroll_x.pack(side="bottom", fill="x")
     
     # Treeview
-    columns = ("Tedarikçi", "Yetkili", "Telefon", "Mail", "Alım Türü", "Eksik Evraklar", "Tarih")
+    columns = ("Tedarikçi", "Yetkili", "Telefon", "Mail", "Alım Türü", "Eksik Evraklar", "Başlangıç", "Bitiş", "Kayıt")
     cari_tree = ttk.Treeview(tree_container, columns=columns, show="tree headings", 
                             yscrollcommand=tree_scroll_y.set, xscrollcommand=tree_scroll_x.set,
                             selectmode="extended",  # Multi-select desteği
@@ -9549,8 +9688,10 @@ def init_compliance_center_tab():
     cari_tree.column("Telefon", width=100, minwidth=80)
     cari_tree.column("Mail", width=150, minwidth=100)
     cari_tree.column("Alım Türü", width=100, minwidth=80)
-    cari_tree.column("Eksik Evraklar", width=200, minwidth=150)
-    cari_tree.column("Tarih", width=130, minwidth=100)
+    cari_tree.column("Eksik Evraklar", width=150, minwidth=120)
+    cari_tree.column("Başlangıç", width=100, minwidth=80)
+    cari_tree.column("Bitiş", width=100, minwidth=80)
+    cari_tree.column("Kayıt", width=130, minwidth=100)
     
     # Başlıklar
     cari_tree.heading("#0", text="☑")
@@ -9560,7 +9701,9 @@ def init_compliance_center_tab():
     cari_tree.heading("Mail", text="Mail")
     cari_tree.heading("Alım Türü", text="Alım Türü")
     cari_tree.heading("Eksik Evraklar", text="Eksik Evraklar")
-    cari_tree.heading("Tarih", text="Kayıt Tarihi")
+    cari_tree.heading("Başlangıç", text="Başlangıç Tarihi")
+    cari_tree.heading("Bitiş", text="Bitiş Tarihi")
+    cari_tree.heading("Kayıt", text="Kayıt Tarihi")
     
     def refresh_cari_list():
         """Cari listesini yenile"""
@@ -9592,6 +9735,15 @@ def init_compliance_center_tab():
                     continue
             
             # Kayıt ekle
+            # Tarihleri formatta (Excel'den gelen datetime objeleri string'e çevir)
+            baslangic = record.get('Başlangıç Tarihi', '')
+            if hasattr(baslangic, 'strftime'):
+                baslangic = baslangic.strftime('%Y-%m-%d')
+            
+            bitis = record.get('Bitiş Tarihi', '')
+            if hasattr(bitis, 'strftime'):
+                bitis = bitis.strftime('%Y-%m-%d')
+            
             values = (
                 str(record.get('Tedarikçi Adı', '')),
                 str(record.get('Yetkili Kişi', '')),
@@ -9599,6 +9751,8 @@ def init_compliance_center_tab():
                 str(record.get('Mail', '')),
                 str(record.get('Alım Türü', '')),
                 str(record.get('Eksik Evraklar', '')),
+                str(baslangic),
+                str(bitis),
                 str(record.get('Kayıt Tarihi', ''))
             )
             item_id = cari_tree.insert("", "end", text="☐", values=values, tags=(idx,))
